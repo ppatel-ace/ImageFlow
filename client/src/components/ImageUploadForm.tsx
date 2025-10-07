@@ -6,8 +6,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card } from "@/components/ui/card";
-import { Camera, Upload, FolderOpen, CheckCircle2, Loader2, Image as ImageIcon } from "lucide-react";
+import { Camera, Upload, FolderOpen, CheckCircle2, Loader2, Image as ImageIcon, Download } from "lucide-react";
 import { format } from "date-fns";
+import { useToast } from "@/hooks/use-toast";
 
 const uploadFormSchema = z.object({
   partNumber: z.string().min(1, "Part # is required"),
@@ -27,6 +28,8 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
   const [isUploading, setIsUploading] = useState(false);
   const [uploadSuccess, setUploadSuccess] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [isSavingLocal, setIsSavingLocal] = useState(false);
+  const { toast } = useToast();
 
   const lastPartNumber = localStorage.getItem("lastPartNumber") || "";
   const lastCustomerName = localStorage.getItem("lastCustomerName") || "";
@@ -80,6 +83,84 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
       console.error("Upload failed:", error);
     } finally {
       setIsUploading(false);
+    }
+  };
+
+  const handleSaveLocally = async () => {
+    if (!selectedFile || !customerName || !workOrderNumber || !partNumber) {
+      toast({
+        title: "Missing Information",
+        description: "Please fill in all fields and select an image before saving.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsSavingLocal(true);
+    try {
+      // Check if the File System Access API is supported
+      if ('showDirectoryPicker' in window) {
+        // Use File System Access API to create folder structure
+        const directoryHandle = await (window as any).showDirectoryPicker();
+        
+        // Create or get customer name folder
+        const customerFolderHandle = await directoryHandle.getDirectoryHandle(customerName, { create: true });
+        
+        // Create or get work order folder inside customer folder
+        const workOrderFolderHandle = await customerFolderHandle.getDirectoryHandle(workOrderNumber, { create: true });
+        
+        // Generate filename with timestamp
+        const timestamp = format(new Date(), "yyyyMMdd-HHmmss");
+        const extension = selectedFile.name.split('.').pop() || 'jpg';
+        const filename = `${partNumber}-${timestamp}.${extension}`;
+        
+        // Create and write the file
+        const fileHandle = await workOrderFolderHandle.getFileHandle(filename, { create: true });
+        const writable = await fileHandle.createWritable();
+        await writable.write(selectedFile);
+        await writable.close();
+        
+        toast({
+          title: "Saved Successfully",
+          description: `Image saved to ${customerName}/${workOrderNumber}/${filename}`,
+        });
+      } else {
+        // Fallback: simple download with suggested path in filename
+        const timestamp = format(new Date(), "yyyyMMdd-HHmmss");
+        const extension = selectedFile.name.split('.').pop() || 'jpg';
+        const filename = `${partNumber}-${timestamp}.${extension}`;
+        
+        const url = URL.createObjectURL(selectedFile);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        
+        toast({
+          title: "Download Started",
+          description: `Please create folders: ${customerName}/${workOrderNumber}/ and move the file there.`,
+        });
+      }
+    } catch (error) {
+      if ((error as Error).name === 'AbortError') {
+        // User cancelled the directory picker
+        toast({
+          title: "Cancelled",
+          description: "Save operation was cancelled.",
+        });
+      } else {
+        console.error("Save failed:", error);
+        toast({
+          title: "Save Failed",
+          description: "Could not save the image locally.",
+          variant: "destructive",
+        });
+      }
+    } finally {
+      setIsSavingLocal(false);
     }
   };
 
@@ -252,16 +333,37 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
               setImagePreview(null);
               setSelectedFile(null);
             }}
-            disabled={isUploading}
+            disabled={isUploading || isSavingLocal}
             data-testid="button-clear"
           >
             Clear Form
           </Button>
           <Button
+            type="button"
+            variant="secondary"
+            size="lg"
+            className="flex-1 min-h-14"
+            onClick={handleSaveLocally}
+            disabled={isUploading || isSavingLocal || !selectedFile}
+            data-testid="button-save-local"
+          >
+            {isSavingLocal ? (
+              <>
+                <Loader2 className="w-5 h-5 mr-2 animate-spin" />
+                Saving...
+              </>
+            ) : (
+              <>
+                <Download className="w-5 h-5 mr-2" />
+                Save Locally
+              </>
+            )}
+          </Button>
+          <Button
             type="submit"
             size="lg"
             className="flex-1 min-h-14"
-            disabled={isUploading || !form.formState.isValid}
+            disabled={isUploading || isSavingLocal || !form.formState.isValid}
             data-testid="button-upload"
           >
             {isUploading ? (
