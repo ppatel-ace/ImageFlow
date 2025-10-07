@@ -10,7 +10,6 @@ import { Camera, Upload, FolderOpen, CheckCircle2, Loader2, Image as ImageIcon }
 import { format } from "date-fns";
 
 const uploadFormSchema = z.object({
-  imageName: z.string().min(1, "Image name is required"),
   date: z.string().min(1, "Date is required"),
   customerName: z.string().min(1, "Customer name is required"),
   workOrderNumber: z.string().min(1, "Work Order # is required"),
@@ -33,7 +32,6 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
   const form = useForm<UploadFormData>({
     resolver: zodResolver(uploadFormSchema),
     defaultValues: {
-      imageName: "",
       date: format(new Date(), "yyyy-MM-dd"),
       customerName: "",
       workOrderNumber: "",
@@ -58,12 +56,13 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
   const handleFormSubmit = async (data: UploadFormData) => {
     setIsUploading(true);
     try {
-      await onSubmit(data);
+      const timestamp = format(new Date(), "yyyyMMdd-HHmmss");
+      const imageName = `${data.partNumber}-${timestamp}`;
+      await onSubmit({ ...data, imageName });
       setUploadSuccess(true);
       setTimeout(() => {
         setUploadSuccess(false);
         form.reset({
-          imageName: "",
           date: format(new Date(), "yyyy-MM-dd"),
           customerName: "",
           workOrderNumber: "",
@@ -81,6 +80,7 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
 
   const customerName = form.watch("customerName");
   const workOrderNumber = form.watch("workOrderNumber");
+  const partNumber = form.watch("partNumber");
 
   return (
     <div className="w-full max-w-3xl mx-auto p-6 space-y-6">
@@ -92,22 +92,6 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
       <form onSubmit={form.handleSubmit(handleFormSubmit)} className="space-y-6">
         <Card className="p-6 space-y-6">
           <div className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="imageName" className="text-lg font-medium">
-                Image Name <span className="text-destructive">*</span>
-              </Label>
-              <Input
-                id="imageName"
-                data-testid="input-image-name"
-                {...form.register("imageName")}
-                placeholder="Enter image name"
-                className="min-h-14 text-base"
-              />
-              {form.formState.errors.imageName && (
-                <p className="text-sm text-destructive">{form.formState.errors.imageName.message}</p>
-              )}
-            </div>
-
             <div className="space-y-2">
               <Label htmlFor="date" className="text-lg font-medium">
                 Date <span className="text-destructive">*</span>
@@ -232,9 +216,16 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
                 <img src={imagePreview} alt="Preview" className="w-full h-full object-contain" />
               </div>
               {selectedFile && (
-                <p className="text-sm text-muted-foreground" data-testid="text-filename">
-                  {selectedFile.name} ({(selectedFile.size / 1024).toFixed(1)} KB)
-                </p>
+                <div className="space-y-1">
+                  {partNumber && (
+                    <p className="text-sm font-medium text-foreground" data-testid="text-generated-name">
+                      Generated name: {partNumber}-{format(new Date(), "yyyyMMdd-HHmmss")}
+                    </p>
+                  )}
+                  <p className="text-sm text-muted-foreground" data-testid="text-filename">
+                    Original: {selectedFile.name} ({(selectedFile.size / 1024).toFixed(1)} KB)
+                  </p>
+                </div>
               )}
             </div>
           </Card>
@@ -262,7 +253,6 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
             className="flex-1 min-h-14"
             onClick={() => {
               form.reset({
-                imageName: "",
                 date: format(new Date(), "yyyy-MM-dd"),
                 customerName: "",
                 workOrderNumber: "",
