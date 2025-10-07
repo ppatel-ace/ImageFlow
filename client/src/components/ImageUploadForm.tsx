@@ -88,12 +88,12 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
   const partNumber = form.watch("partNumber");
 
   const handleSaveImageLocally = () => {
-    if (!selectedFile || !partNumber || !customerName || !workOrderNumber) return;
+    if (!selectedFile || !partNumber) return;
     
     const timestamp = format(new Date(), "yyyyMMdd-HHmmss");
     const imageName = `${partNumber}-${timestamp}`;
     const fileExtension = selectedFile.name.split('.').pop();
-    const fileName = `${customerName}/${workOrderNumber}/${imageName}.${fileExtension}`;
+    const fileName = `${imageName}.${fileExtension}`;
     
     const link = document.createElement('a');
     link.href = imagePreview || '';
@@ -102,7 +102,7 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
     link.click();
     document.body.removeChild(link);
     
-    console.log("Image saved locally with path:", fileName);
+    console.log("Image saved locally:", fileName);
   };
 
   return (
@@ -259,7 +259,7 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
             size="lg"
             className="min-h-14"
             onClick={handleSaveImageLocally}
-            disabled={!selectedFile || !partNumber || !customerName || !workOrderNumber || isUploading}
+            disabled={!selectedFile || !partNumber || isUploading}
             data-testid="button-save-local"
           >
             <Download className="w-5 h-5 mr-2" />
