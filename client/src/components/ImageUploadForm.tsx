@@ -239,7 +239,7 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
   return (
     <div className="w-full max-w-3xl mx-auto p-6 space-y-6">
       <div className="text-center space-y-2">
-        <h1 className="text-3xl font-semibold text-foreground">Upload Image</h1>
+        <h1 className="text-3xl font-semibold text-foreground">Ace Image Organizer</h1>
         <p className="text-muted-foreground text-lg">Capture and organize images to OneDrive</p>
       </div>
 
