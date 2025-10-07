@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Work Order App</string>
+    <string name="title_activity_main">Work Order App</string>
+    <string name="package_name">com.workorder.app</string>
+    <string name="custom_url_scheme">com.workorder.app</string>
+</resources>
