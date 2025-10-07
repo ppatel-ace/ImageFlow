@@ -91,9 +91,11 @@ Preferred communication style: Simple, everyday language.
 ### Third-Party Services
 
 **Microsoft Graph API Integration**
-- `@microsoft/microsoft-graph-client` (v3.0.7) for OneDrive API communication
-- Handles file uploads and folder management in OneDrive
-- Requires OAuth authentication flow (configuration not yet implemented)
+- `@microsoft/microsoft-graph-client` (v3.0.7) for OneDrive and SharePoint API communication
+- Handles file uploads and folder management in OneDrive and SharePoint
+- OneDrive: Uses Replit's OneDrive connector for OAuth authentication (fully implemented)
+- SharePoint: Uses Replit's SharePoint connector for OAuth authentication (user setup required)
+- Files uploaded with Customer Name/Work Order Number folder structure
 
 ### Database
 

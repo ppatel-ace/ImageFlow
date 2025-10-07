@@ -29,6 +29,8 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
   const [uploadSuccess, setUploadSuccess] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [isSavingLocal, setIsSavingLocal] = useState(false);
+  const [isUploadingSharePoint, setIsUploadingSharePoint] = useState(false);
+  const [sharePointSuccess, setSharePointSuccess] = useState(false);
   const { toast } = useToast();
 
   const lastPartNumber = localStorage.getItem("lastPartNumber") || "";
@@ -161,6 +163,69 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
       }
     } finally {
       setIsSavingLocal(false);
+    }
+  };
+
+  const handleSharePointUpload = async () => {
+    if (!selectedFile || !customerName || !workOrderNumber || !partNumber) {
+      toast({
+        title: "Missing Information",
+        description: "Please fill in all fields and select an image before uploading.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsUploadingSharePoint(true);
+    try {
+      const timestamp = format(new Date(), "yyyyMMdd-HHmmss");
+      const imageName = `${partNumber}-${timestamp}`;
+      
+      const formData = new FormData();
+      formData.append("imageFile", selectedFile);
+      formData.append("customerName", customerName);
+      formData.append("workOrderNumber", workOrderNumber);
+      formData.append("imageName", imageName);
+
+      const response = await fetch("/api/upload/sharepoint", {
+        method: "POST",
+        body: formData,
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        if (result.requiresAuth) {
+          toast({
+            title: "SharePoint Not Connected",
+            description: "Please connect your SharePoint account in the Integrations panel to upload files.",
+            variant: "destructive",
+          });
+          throw new Error(result.message);
+        }
+        throw new Error(result.error || "Upload failed");
+      }
+
+      toast({
+        title: "Upload Successful",
+        description: `Image saved to SharePoint: ${result.path}`,
+      });
+
+      setSharePointSuccess(true);
+      setTimeout(() => {
+        setSharePointSuccess(false);
+      }, 2000);
+    } catch (error: any) {
+      console.error("SharePoint upload error:", error);
+      if (!error.message.includes('not connected')) {
+        toast({
+          title: "Upload Failed",
+          description: error.message || "An error occurred while uploading to SharePoint.",
+          variant: "destructive",
+        });
+      }
+    } finally {
+      setIsUploadingSharePoint(false);
     }
   };
 
@@ -333,7 +398,7 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
               setImagePreview(null);
               setSelectedFile(null);
             }}
-            disabled={isUploading || isSavingLocal}
+            disabled={isUploading || isSavingLocal || isUploadingSharePoint}
             data-testid="button-clear"
           >
             Clear Form
@@ -344,7 +409,7 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
             size="lg"
             className="flex-1 min-h-14"
             onClick={handleSaveLocally}
-            disabled={isUploading || isSavingLocal || !selectedFile}
+            disabled={isUploading || isSavingLocal || isUploadingSharePoint || !selectedFile}
             data-testid="button-save-local"
           >
             {isSavingLocal ? (
@@ -359,11 +424,14 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
               </>
             )}
           </Button>
+        </div>
+        
+        <div className="flex gap-3">
           <Button
             type="submit"
             size="lg"
             className="flex-1 min-h-14"
-            disabled={isUploading || isSavingLocal || !selectedFile}
+            disabled={isUploading || isSavingLocal || isUploadingSharePoint || !selectedFile}
             data-testid="button-upload"
           >
             {isUploading ? (
@@ -380,6 +448,31 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
               <>
                 <Upload className="w-5 h-5 mr-2" />
                 Upload to OneDrive
+              </>
+            )}
+          </Button>
+          <Button
+            type="button"
+            size="lg"
+            className="flex-1 min-h-14"
+            onClick={handleSharePointUpload}
+            disabled={isUploading || isSavingLocal || isUploadingSharePoint || !selectedFile}
+            data-testid="button-upload-sharepoint"
+          >
+            {isUploadingSharePoint ? (
+              <>
+                <Loader2 className="w-5 h-5 mr-2 animate-spin" />
+                Uploading...
+              </>
+            ) : sharePointSuccess ? (
+              <>
+                <CheckCircle2 className="w-5 h-5 mr-2" />
+                Success!
+              </>
+            ) : (
+              <>
+                <Upload className="w-5 h-5 mr-2" />
+                Upload to SharePoint
               </>
             )}
           </Button>
