@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card } from "@/components/ui/card";
-import { Camera, Upload, FolderOpen, CheckCircle2, Loader2, Image as ImageIcon, Save } from "lucide-react";
+import { Camera, Upload, FolderOpen, CheckCircle2, Loader2, Image as ImageIcon, Download } from "lucide-react";
 import { format } from "date-fns";
 
 const uploadFormSchema = z.object({
@@ -87,18 +87,22 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
   const workOrderNumber = form.watch("workOrderNumber");
   const partNumber = form.watch("partNumber");
 
-  const handleSaveToStorage = () => {
-    const currentValues = form.getValues();
-    if (currentValues.partNumber) {
-      localStorage.setItem("lastPartNumber", currentValues.partNumber);
-    }
-    if (currentValues.customerName) {
-      localStorage.setItem("lastCustomerName", currentValues.customerName);
-    }
-    if (currentValues.workOrderNumber) {
-      localStorage.setItem("lastWorkOrderNumber", currentValues.workOrderNumber);
-    }
-    console.log("Values saved to storage:", currentValues);
+  const handleSaveImageLocally = () => {
+    if (!selectedFile || !partNumber) return;
+    
+    const timestamp = format(new Date(), "yyyyMMdd-HHmmss");
+    const imageName = `${partNumber}-${timestamp}`;
+    const fileExtension = selectedFile.name.split('.').pop();
+    const fileName = `${imageName}.${fileExtension}`;
+    
+    const link = document.createElement('a');
+    link.href = imagePreview || '';
+    link.download = fileName;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    
+    console.log("Image saved locally:", fileName);
   };
 
   return (
@@ -254,12 +258,12 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
             variant="outline"
             size="lg"
             className="min-h-14"
-            onClick={handleSaveToStorage}
-            disabled={isUploading}
-            data-testid="button-save-storage"
+            onClick={handleSaveImageLocally}
+            disabled={!selectedFile || !partNumber || isUploading}
+            data-testid="button-save-local"
           >
-            <Save className="w-5 h-5 mr-2" />
-            Save Values
+            <Download className="w-5 h-5 mr-2" />
+            Save Locally
           </Button>
           <Button
             type="button"
