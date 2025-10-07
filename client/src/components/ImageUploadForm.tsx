@@ -105,8 +105,11 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
         // Use File System Access API to create folder structure
         const directoryHandle = await (window as any).showDirectoryPicker();
         
+        // Create or get ACE folder
+        const aceFolderHandle = await directoryHandle.getDirectoryHandle('ACE', { create: true });
+        
         // Create or get customer name folder
-        const customerFolderHandle = await directoryHandle.getDirectoryHandle(customerName, { create: true });
+        const customerFolderHandle = await aceFolderHandle.getDirectoryHandle(customerName, { create: true });
         
         // Create or get work order folder inside customer folder
         const workOrderFolderHandle = await customerFolderHandle.getDirectoryHandle(workOrderNumber, { create: true });
@@ -124,7 +127,7 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
         
         toast({
           title: "Saved Successfully",
-          description: `Image saved to ${customerName}/${workOrderNumber}/${filename}`,
+          description: `Image saved to ACE/${customerName}/${workOrderNumber}/${filename}`,
         });
       } else {
         // Fallback: simple download with suggested path in filename
@@ -143,7 +146,7 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
         
         toast({
           title: "Download Started",
-          description: `Please create folders: ${customerName}/${workOrderNumber}/ and move the file there.`,
+          description: `Please create folders: ACE/${customerName}/${workOrderNumber}/ and move the file there.`,
         });
       }
     } catch (error) {
@@ -371,9 +374,9 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
             <div className="flex items-start gap-3">
               <FolderOpen className="w-5 h-5 text-primary mt-0.5" />
               <div className="flex-1">
-                <h3 className="text-sm font-medium text-muted-foreground mb-1">OneDrive Folder Path</h3>
+                <h3 className="text-sm font-medium text-muted-foreground mb-1">Folder Path</h3>
                 <p className="font-mono text-base text-foreground" data-testid="text-folder-path">
-                  {customerName || "[Customer Name]"} / {workOrderNumber || "[Work Order #]"}
+                  ACE / {customerName || "[Customer Name]"} / {workOrderNumber || "[Work Order #]"}
                 </p>
               </div>
             </div>

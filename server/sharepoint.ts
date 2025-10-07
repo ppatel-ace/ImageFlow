@@ -95,8 +95,8 @@ export async function uploadFileToSharePoint(
   const client = await getSharePointClient();
   
   // Upload to SharePoint site's default document library
-  // Path structure: Documents/CustomerName/WorkOrderNumber/filename
-  const folderPath = `${customerName}/${workOrderNumber}`;
+  // Path structure: ACE/CustomerName/WorkOrderNumber/filename
+  const folderPath = `ACE/${customerName}/${workOrderNumber}`;
   
   // First, get the site ID (use root site)
   const site = await client.api('/sites/root').get();
