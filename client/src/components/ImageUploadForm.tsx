@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card } from "@/components/ui/card";
-import { Camera, Upload, FolderOpen, CheckCircle2, Loader2, Image as ImageIcon, Download } from "lucide-react";
+import { Camera, Upload, FolderOpen, CheckCircle2, Loader2, Image as ImageIcon } from "lucide-react";
 import { format } from "date-fns";
 
 const uploadFormSchema = z.object({
@@ -86,24 +86,6 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
   const customerName = form.watch("customerName");
   const workOrderNumber = form.watch("workOrderNumber");
   const partNumber = form.watch("partNumber");
-
-  const handleSaveImageLocally = () => {
-    if (!selectedFile || !partNumber) return;
-    
-    const timestamp = format(new Date(), "yyyyMMdd-HHmmss");
-    const imageName = `${partNumber}-${timestamp}`;
-    const fileExtension = selectedFile.name.split('.').pop();
-    const fileName = `${imageName}.${fileExtension}`;
-    
-    const link = document.createElement('a');
-    link.href = imagePreview || '';
-    link.download = fileName;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    
-    console.log("Image saved locally:", fileName);
-  };
 
   return (
     <div className="w-full max-w-3xl mx-auto p-6 space-y-6">
@@ -257,19 +239,7 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
             type="button"
             variant="outline"
             size="lg"
-            className="min-h-14"
-            onClick={handleSaveImageLocally}
-            disabled={!selectedFile || !partNumber || isUploading}
-            data-testid="button-save-local"
-          >
-            <Download className="w-5 h-5 mr-2" />
-            Save Locally
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            size="lg"
-            className="min-h-14"
+            className="flex-1 min-h-14"
             onClick={() => {
               const lastPart = localStorage.getItem("lastPartNumber") || "";
               const lastCustomer = localStorage.getItem("lastCustomerName") || "";
