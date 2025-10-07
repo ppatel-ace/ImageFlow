@@ -43,6 +43,9 @@ Preferred communication style: Simple, everyday language.
 - Custom middleware for request/response logging with timing metrics
 - Development-only Vite integration for HMR during development
 - Production builds use esbuild for server bundling
+- Environment-based configuration: NODE_ENV determines dev vs production behavior
+- Dynamic imports prevent Vite dependencies from being bundled in production
+- Static file serving in production without Vite overhead
 
 **Storage Layer**
 - Abstracted storage interface (IStorage) allowing multiple implementations
