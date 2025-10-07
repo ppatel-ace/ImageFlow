@@ -28,13 +28,14 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
   const [uploadSuccess, setUploadSuccess] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
 
+  const lastPartNumber = localStorage.getItem("lastPartNumber") || "";
   const lastCustomerName = localStorage.getItem("lastCustomerName") || "";
   const lastWorkOrderNumber = localStorage.getItem("lastWorkOrderNumber") || "";
 
   const form = useForm<UploadFormData>({
     resolver: zodResolver(uploadFormSchema),
     defaultValues: {
-      partNumber: "",
+      partNumber: lastPartNumber,
       customerName: lastCustomerName,
       workOrderNumber: lastWorkOrderNumber,
     },
@@ -57,6 +58,7 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
   const handleFormSubmit = async (data: UploadFormData) => {
     setIsUploading(true);
     try {
+      localStorage.setItem("lastPartNumber", data.partNumber);
       localStorage.setItem("lastCustomerName", data.customerName);
       localStorage.setItem("lastWorkOrderNumber", data.workOrderNumber);
       
@@ -67,7 +69,7 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
       setTimeout(() => {
         setUploadSuccess(false);
         form.reset({
-          partNumber: "",
+          partNumber: data.partNumber,
           customerName: data.customerName,
           workOrderNumber: data.workOrderNumber,
         });
@@ -239,10 +241,11 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
             size="lg"
             className="flex-1 min-h-14"
             onClick={() => {
+              const lastPart = localStorage.getItem("lastPartNumber") || "";
               const lastCustomer = localStorage.getItem("lastCustomerName") || "";
               const lastWorkOrder = localStorage.getItem("lastWorkOrderNumber") || "";
               form.reset({
-                partNumber: "",
+                partNumber: lastPart,
                 customerName: lastCustomer,
                 workOrderNumber: lastWorkOrder,
               });
