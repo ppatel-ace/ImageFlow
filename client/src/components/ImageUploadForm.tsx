@@ -387,13 +387,10 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
             size="lg"
             className="flex-1 min-h-14"
             onClick={() => {
-              const lastPart = localStorage.getItem("lastPartNumber") || "";
-              const lastCustomer = localStorage.getItem("lastCustomerName") || "";
-              const lastWorkOrder = localStorage.getItem("lastWorkOrderNumber") || "";
               form.reset({
-                partNumber: lastPart,
-                customerName: lastCustomer,
-                workOrderNumber: lastWorkOrder,
+                partNumber: "",
+                customerName: "",
+                workOrderNumber: "",
               });
               setImagePreview(null);
               setSelectedFile(null);
