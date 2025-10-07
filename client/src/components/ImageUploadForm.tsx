@@ -14,6 +14,7 @@ const uploadFormSchema = z.object({
   date: z.string().min(1, "Date is required"),
   customerName: z.string().min(1, "Customer name is required"),
   workOrderNumber: z.string().min(1, "Work Order # is required"),
+  partNumber: z.string().min(1, "Part # is required"),
   imageFile: z.any().refine((file) => file instanceof File, "Image file is required"),
 });
 
@@ -36,6 +37,7 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
       date: format(new Date(), "yyyy-MM-dd"),
       customerName: "",
       workOrderNumber: "",
+      partNumber: "",
     },
   });
 
@@ -65,6 +67,7 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
           date: format(new Date(), "yyyy-MM-dd"),
           customerName: "",
           workOrderNumber: "",
+          partNumber: "",
         });
         setImagePreview(null);
         setSelectedFile(null);
@@ -150,6 +153,22 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
               />
               {form.formState.errors.workOrderNumber && (
                 <p className="text-sm text-destructive">{form.formState.errors.workOrderNumber.message}</p>
+              )}
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="partNumber" className="text-lg font-medium">
+                Part # <span className="text-destructive">*</span>
+              </Label>
+              <Input
+                id="partNumber"
+                data-testid="input-part-number"
+                {...form.register("partNumber")}
+                placeholder="Enter part number"
+                className="min-h-14 text-base font-mono"
+              />
+              {form.formState.errors.partNumber && (
+                <p className="text-sm text-destructive">{form.formState.errors.partNumber.message}</p>
               )}
             </div>
 
@@ -247,6 +266,7 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
                 date: format(new Date(), "yyyy-MM-dd"),
                 customerName: "",
                 workOrderNumber: "",
+                partNumber: "",
               });
               setImagePreview(null);
               setSelectedFile(null);
