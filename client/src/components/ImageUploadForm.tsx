@@ -363,7 +363,7 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
             type="submit"
             size="lg"
             className="flex-1 min-h-14"
-            disabled={isUploading || isSavingLocal || !form.formState.isValid}
+            disabled={isUploading || isSavingLocal || !selectedFile}
             data-testid="button-upload"
           >
             {isUploading ? (
