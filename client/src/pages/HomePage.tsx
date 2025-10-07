@@ -59,7 +59,7 @@ export default function HomePage() {
             </div>
             <div>
               <h1 className="text-lg font-semibold text-foreground">Ace Image Organizer</h1>
-              <p className="text-xs text-muted-foreground">OneDrive Integration</p>
+              <p className="text-xs text-muted-foreground">Cloud Integration</p>
             </div>
           </div>
           <ThemeToggle />
