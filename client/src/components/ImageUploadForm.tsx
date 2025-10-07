@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card } from "@/components/ui/card";
-import { Camera, Upload, FolderOpen, CheckCircle2, Loader2, Image as ImageIcon } from "lucide-react";
+import { Camera, Upload, FolderOpen, CheckCircle2, Loader2, Image as ImageIcon, Save } from "lucide-react";
 import { format } from "date-fns";
 
 const uploadFormSchema = z.object({
@@ -86,6 +86,20 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
   const customerName = form.watch("customerName");
   const workOrderNumber = form.watch("workOrderNumber");
   const partNumber = form.watch("partNumber");
+
+  const handleSaveToStorage = () => {
+    const currentValues = form.getValues();
+    if (currentValues.partNumber) {
+      localStorage.setItem("lastPartNumber", currentValues.partNumber);
+    }
+    if (currentValues.customerName) {
+      localStorage.setItem("lastCustomerName", currentValues.customerName);
+    }
+    if (currentValues.workOrderNumber) {
+      localStorage.setItem("lastWorkOrderNumber", currentValues.workOrderNumber);
+    }
+    console.log("Values saved to storage:", currentValues);
+  };
 
   return (
     <div className="w-full max-w-3xl mx-auto p-6 space-y-6">
@@ -239,7 +253,19 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
             type="button"
             variant="outline"
             size="lg"
-            className="flex-1 min-h-14"
+            className="min-h-14"
+            onClick={handleSaveToStorage}
+            disabled={isUploading}
+            data-testid="button-save-storage"
+          >
+            <Save className="w-5 h-5 mr-2" />
+            Save Values
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="lg"
+            className="min-h-14"
             onClick={() => {
               const lastPart = localStorage.getItem("lastPartNumber") || "";
               const lastCustomer = localStorage.getItem("lastCustomerName") || "";
