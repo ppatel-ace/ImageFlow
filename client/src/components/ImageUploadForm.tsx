@@ -480,7 +480,7 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
       </form>
       
       <div className="text-center mt-8 pb-4">
-        <p className="text-sm text-muted-foreground">Made by Parth</p>
+        <p className="text-sm text-muted-foreground">Made by PP Inc.</p>
       </div>
     </div>
   );
