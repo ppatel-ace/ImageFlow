@@ -10,17 +10,16 @@ import { Camera, Upload, FolderOpen, CheckCircle2, Loader2, Image as ImageIcon }
 import { format } from "date-fns";
 
 const uploadFormSchema = z.object({
-  date: z.string().min(1, "Date is required"),
+  partNumber: z.string().min(1, "Part # is required"),
   customerName: z.string().min(1, "Customer name is required"),
   workOrderNumber: z.string().min(1, "Work Order # is required"),
-  partNumber: z.string().min(1, "Part # is required"),
   imageFile: z.any().refine((file) => file instanceof File, "Image file is required"),
 });
 
 type UploadFormData = z.infer<typeof uploadFormSchema>;
 
 interface ImageUploadFormProps {
-  onSubmit: (data: UploadFormData) => Promise<void>;
+  onSubmit: (data: UploadFormData & { imageName: string }) => Promise<void>;
 }
 
 export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
@@ -29,13 +28,15 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
   const [uploadSuccess, setUploadSuccess] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
 
+  const lastCustomerName = localStorage.getItem("lastCustomerName") || "";
+  const lastWorkOrderNumber = localStorage.getItem("lastWorkOrderNumber") || "";
+
   const form = useForm<UploadFormData>({
     resolver: zodResolver(uploadFormSchema),
     defaultValues: {
-      date: format(new Date(), "yyyy-MM-dd"),
-      customerName: "",
-      workOrderNumber: "",
       partNumber: "",
+      customerName: lastCustomerName,
+      workOrderNumber: lastWorkOrderNumber,
     },
   });
 
@@ -56,6 +57,9 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
   const handleFormSubmit = async (data: UploadFormData) => {
     setIsUploading(true);
     try {
+      localStorage.setItem("lastCustomerName", data.customerName);
+      localStorage.setItem("lastWorkOrderNumber", data.workOrderNumber);
+      
       const timestamp = format(new Date(), "yyyyMMdd-HHmmss");
       const imageName = `${data.partNumber}-${timestamp}`;
       await onSubmit({ ...data, imageName });
@@ -63,10 +67,9 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
       setTimeout(() => {
         setUploadSuccess(false);
         form.reset({
-          date: format(new Date(), "yyyy-MM-dd"),
-          customerName: "",
-          workOrderNumber: "",
           partNumber: "",
+          customerName: data.customerName,
+          workOrderNumber: data.workOrderNumber,
         });
         setImagePreview(null);
         setSelectedFile(null);
@@ -93,18 +96,18 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
         <Card className="p-6 space-y-6">
           <div className="space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="date" className="text-lg font-medium">
-                Date <span className="text-destructive">*</span>
+              <Label htmlFor="partNumber" className="text-lg font-medium">
+                Part # <span className="text-destructive">*</span>
               </Label>
               <Input
-                id="date"
-                type="date"
-                data-testid="input-date"
-                {...form.register("date")}
-                className="min-h-14 text-base"
+                id="partNumber"
+                data-testid="input-part-number"
+                {...form.register("partNumber")}
+                placeholder="Enter part number"
+                className="min-h-14 text-base font-mono"
               />
-              {form.formState.errors.date && (
-                <p className="text-sm text-destructive">{form.formState.errors.date.message}</p>
+              {form.formState.errors.partNumber && (
+                <p className="text-sm text-destructive">{form.formState.errors.partNumber.message}</p>
               )}
             </div>
 
@@ -137,22 +140,6 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
               />
               {form.formState.errors.workOrderNumber && (
                 <p className="text-sm text-destructive">{form.formState.errors.workOrderNumber.message}</p>
-              )}
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="partNumber" className="text-lg font-medium">
-                Part # <span className="text-destructive">*</span>
-              </Label>
-              <Input
-                id="partNumber"
-                data-testid="input-part-number"
-                {...form.register("partNumber")}
-                placeholder="Enter part number"
-                className="min-h-14 text-base font-mono"
-              />
-              {form.formState.errors.partNumber && (
-                <p className="text-sm text-destructive">{form.formState.errors.partNumber.message}</p>
               )}
             </div>
 
@@ -252,11 +239,12 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
             size="lg"
             className="flex-1 min-h-14"
             onClick={() => {
+              const lastCustomer = localStorage.getItem("lastCustomerName") || "";
+              const lastWorkOrder = localStorage.getItem("lastWorkOrderNumber") || "";
               form.reset({
-                date: format(new Date(), "yyyy-MM-dd"),
-                customerName: "",
-                workOrderNumber: "",
                 partNumber: "",
+                customerName: lastCustomer,
+                workOrderNumber: lastWorkOrder,
               });
               setImagePreview(null);
               setSelectedFile(null);
