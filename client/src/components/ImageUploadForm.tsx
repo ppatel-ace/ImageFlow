@@ -77,7 +77,7 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
       localStorage.setItem("lastWorkOrderNumber", data.workOrderNumber);
       
       const timestamp = format(new Date(), "yyyyMMdd-HHmmss");
-      const imageName = `${data.partNumber}-${timestamp}`;
+      const imageName = `${data.partNumber}${data.rev}-${timestamp}`;
       await onSubmit({ ...data, imageName });
       setUploadSuccess(true);
       setTimeout(() => {
@@ -131,7 +131,7 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
         // Generate filename with timestamp
         const timestamp = format(new Date(), "yyyyMMdd-HHmmss");
         const extension = selectedFile.name.split('.').pop() || 'jpg';
-        const filename = `${partNumber}-${timestamp}.${extension}`;
+        const filename = `${partNumber}${rev}-${timestamp}.${extension}`;
         
         // Create and write the file
         const fileHandle = await workOrderFolderHandle.getFileHandle(filename, { create: true });
@@ -147,7 +147,7 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
         // Fallback: simple download with suggested path in filename
         const timestamp = format(new Date(), "yyyyMMdd-HHmmss");
         const extension = selectedFile.name.split('.').pop() || 'jpg';
-        const filename = `${partNumber}-${timestamp}.${extension}`;
+        const filename = `${partNumber}${rev}-${timestamp}.${extension}`;
         
         const url = URL.createObjectURL(selectedFile);
         const a = document.createElement('a');
@@ -196,7 +196,7 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
     setIsUploadingSharePoint(true);
     try {
       const timestamp = format(new Date(), "yyyyMMdd-HHmmss");
-      const imageName = `${partNumber}-${timestamp}`;
+      const imageName = `${partNumber}${form.watch("rev")}-${timestamp}`;
       
       const formData = new FormData();
       formData.append("imageFile", selectedFile);
@@ -251,6 +251,7 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
   const customerName = form.watch("customerName");
   const workOrderNumber = form.watch("workOrderNumber");
   const partNumber = form.watch("partNumber");
+  const rev = form.watch("rev");
 
   return (
     <div className="w-full max-w-3xl mx-auto p-6 space-y-6">
@@ -408,9 +409,9 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
               </div>
               {selectedFile && (
                 <div className="space-y-1">
-                  {partNumber && (
+                  {partNumber && rev && (
                     <p className="text-sm font-medium text-foreground" data-testid="text-generated-name">
-                      Generated name: {partNumber}-{format(new Date(), "yyyyMMdd-HHmmss")}
+                      Generated name: {partNumber}{rev}-{format(new Date(), "yyyyMMdd-HHmmss")}
                     </p>
                   )}
                   <p className="text-sm text-muted-foreground" data-testid="text-filename">
