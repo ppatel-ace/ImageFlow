@@ -117,8 +117,11 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
         // Create or get customer name folder
         const customerFolderHandle = await aceFolderHandle.getDirectoryHandle(customerName, { create: true });
         
-        // Create or get work order folder inside customer folder
-        const workOrderFolderHandle = await customerFolderHandle.getDirectoryHandle(workOrderNumber, { create: true });
+        // Create or get dept folder
+        const deptFolderHandle = await customerFolderHandle.getDirectoryHandle(dept, { create: true });
+        
+        // Create or get work order folder inside dept folder
+        const workOrderFolderHandle = await deptFolderHandle.getDirectoryHandle(workOrderNumber, { create: true });
         
         // Generate filename with timestamp
         const timestamp = format(new Date(), "yyyyMMdd-HHmmss");
@@ -133,7 +136,7 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
         
         toast({
           title: "Saved Successfully",
-          description: `Image saved to ACE/${customerName}/${workOrderNumber}/${filename}`,
+          description: `Image saved to ACE/${customerName}/${dept}/${workOrderNumber}/${filename}`,
         });
       } else {
         // Fallback: simple download with suggested path in filename
@@ -152,7 +155,7 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
         
         toast({
           title: "Download Started",
-          description: `Please create folders: ACE/${customerName}/${workOrderNumber}/ and move the file there.`,
+          description: `Please create folders: ACE/${customerName}/${dept}/${workOrderNumber}/ and move the file there.`,
         });
       }
     } catch (error) {
@@ -193,6 +196,7 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
       const formData = new FormData();
       formData.append("imageFile", selectedFile);
       formData.append("customerName", customerName);
+      formData.append("dept", dept);
       formData.append("workOrderNumber", workOrderNumber);
       formData.append("imageName", imageName);
 
@@ -397,14 +401,14 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
           </Card>
         )}
 
-        {(customerName || workOrderNumber) && (
+        {(customerName || dept || workOrderNumber) && (
           <Card className="p-6 bg-accent/50">
             <div className="flex items-start gap-3">
               <FolderOpen className="w-5 h-5 text-primary mt-0.5" />
               <div className="flex-1">
                 <h3 className="text-sm font-medium text-muted-foreground mb-1">Folder Path</h3>
                 <p className="font-mono text-base text-foreground" data-testid="text-folder-path">
-                  ACE / {customerName || "[Customer Name]"} / {workOrderNumber || "[Work Order #]"}
+                  ACE / {customerName || "[Customer Name]"} / {dept || "[Dept]"} / {workOrderNumber || "[Work Order #]"}
                 </p>
               </div>
             </div>

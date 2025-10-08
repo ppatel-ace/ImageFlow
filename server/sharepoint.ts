@@ -88,6 +88,7 @@ async function ensureFolder(client: any, siteId: string, folderPath: string) {
 
 export async function uploadFileToSharePoint(
   customerName: string,
+  dept: string,
   workOrderNumber: string,
   fileName: string,
   fileBuffer: Buffer
@@ -95,8 +96,8 @@ export async function uploadFileToSharePoint(
   const client = await getSharePointClient();
   
   // Upload to SharePoint site's default document library
-  // Path structure: ACE/CustomerName/WorkOrderNumber/filename
-  const folderPath = `ACE/${customerName}/${workOrderNumber}`;
+  // Path structure: ACE/CustomerName/Dept/WorkOrderNumber/filename
+  const folderPath = `ACE/${customerName}/${dept}/${workOrderNumber}`;
   
   // First, get the site ID (use root site)
   const site = await client.api('/sites/root').get();

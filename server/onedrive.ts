@@ -48,13 +48,14 @@ export async function getOneDriveClient() {
 
 export async function uploadFileToOneDrive(
   customerName: string,
+  dept: string,
   workOrderNumber: string,
   fileName: string,
   fileBuffer: Buffer
 ) {
   const client = await getOneDriveClient();
   
-  const folderPath = `ACE/${customerName}/${workOrderNumber}`;
+  const folderPath = `ACE/${customerName}/${dept}/${workOrderNumber}`;
   const filePath = `/me/drive/root:/${folderPath}/${fileName}:/content`;
   
   await client

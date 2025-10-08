@@ -14,9 +14,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "No file uploaded" });
       }
 
-      const { customerName, workOrderNumber, imageName } = req.body;
+      const { customerName, dept, workOrderNumber, imageName } = req.body;
 
-      if (!customerName || !workOrderNumber || !imageName) {
+      if (!customerName || !dept || !workOrderNumber || !imageName) {
         return res.status(400).json({ error: "Missing required fields" });
       }
 
@@ -25,6 +25,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const result = await uploadFileToOneDrive(
         customerName,
+        dept,
         workOrderNumber,
         fileName,
         req.file.buffer
@@ -55,9 +56,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "No file uploaded" });
       }
 
-      const { customerName, workOrderNumber, imageName } = req.body;
+      const { customerName, dept, workOrderNumber, imageName } = req.body;
 
-      if (!customerName || !workOrderNumber || !imageName) {
+      if (!customerName || !dept || !workOrderNumber || !imageName) {
         return res.status(400).json({ error: "Missing required fields" });
       }
 
@@ -66,6 +67,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const result = await uploadFileToSharePoint(
         customerName,
+        dept,
         workOrderNumber,
         fileName,
         req.file.buffer

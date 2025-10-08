@@ -9,6 +9,7 @@ export default function HomePage() {
     const formData = new FormData();
     formData.append("imageFile", data.imageFile);
     formData.append("customerName", data.customerName);
+    formData.append("dept", data.dept);
     formData.append("workOrderNumber", data.workOrderNumber);
     formData.append("imageName", data.imageName);
 
