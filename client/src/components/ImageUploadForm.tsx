@@ -14,6 +14,7 @@ import { useToast } from "@/hooks/use-toast";
 const uploadFormSchema = z.object({
   dept: z.string().min(1, "Dept is required"),
   partNumber: z.string().min(1, "Part # is required"),
+  rev: z.string().min(1, "Rev. is required"),
   customerName: z.string().min(1, "Customer name is required"),
   workOrderNumber: z.string().min(1, "Work Order # is required"),
   imageFile: z.any().refine((file) => file instanceof File, "Image file is required"),
@@ -37,6 +38,7 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
 
   const lastDept = localStorage.getItem("lastDept") || "";
   const lastPartNumber = localStorage.getItem("lastPartNumber") || "";
+  const lastRev = localStorage.getItem("lastRev") || "";
   const lastCustomerName = localStorage.getItem("lastCustomerName") || "";
   const lastWorkOrderNumber = localStorage.getItem("lastWorkOrderNumber") || "";
 
@@ -45,6 +47,7 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
     defaultValues: {
       dept: lastDept,
       partNumber: lastPartNumber,
+      rev: lastRev,
       customerName: lastCustomerName,
       workOrderNumber: lastWorkOrderNumber,
     },
@@ -69,6 +72,7 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
     try {
       localStorage.setItem("lastDept", data.dept);
       localStorage.setItem("lastPartNumber", data.partNumber);
+      localStorage.setItem("lastRev", data.rev);
       localStorage.setItem("lastCustomerName", data.customerName);
       localStorage.setItem("lastWorkOrderNumber", data.workOrderNumber);
       
@@ -81,6 +85,7 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
         form.reset({
           dept: data.dept,
           partNumber: data.partNumber,
+          rev: data.rev,
           customerName: data.customerName,
           workOrderNumber: data.workOrderNumber,
         });
@@ -295,6 +300,22 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
             </div>
 
             <div className="space-y-2">
+              <Label htmlFor="rev" className="text-lg font-medium">
+                Rev. <span className="text-destructive">*</span>
+              </Label>
+              <Input
+                id="rev"
+                data-testid="input-rev"
+                {...form.register("rev")}
+                placeholder="Enter revision"
+                className="min-h-14 text-base"
+              />
+              {form.formState.errors.rev && (
+                <p className="text-sm text-destructive">{form.formState.errors.rev.message}</p>
+              )}
+            </div>
+
+            <div className="space-y-2">
               <Label htmlFor="customerName" className="text-lg font-medium">
                 Customer Name <span className="text-destructive">*</span>
               </Label>
@@ -425,6 +446,7 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
               form.reset({
                 dept: "",
                 partNumber: "",
+                rev: "",
                 customerName: "",
                 workOrderNumber: "",
               });
