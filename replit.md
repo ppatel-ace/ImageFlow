@@ -78,7 +78,7 @@ Preferred communication style: Simple, everyday language.
 **Image Upload Flow**
 - Camera input prioritized for direct capture on tablet devices
 - Image preview before upload for quality confirmation
-- Automatic file naming format: {partNumber}{rev}-{timestamp}.{extension} (e.g., ABC123A-20250108-151500.jpg)
+- Automatic file naming format: {partNumber}Rev{rev}-{timestamp}.{extension} (e.g., ABC123RevA-20250108-151500.jpg)
 - Folder structure: ACE/CustomerName/Dept/WorkOrderNumber
 - Local save option for offline scenarios or backup purposes
 
