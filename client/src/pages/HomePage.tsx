@@ -53,21 +53,21 @@ export default function HomePage() {
   return (
     <div className="min-h-screen bg-background">
       <header className="border-b border-border">
-        <div className="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-lg bg-primary flex items-center justify-center">
-              <span className="text-primary-foreground font-bold text-lg">ACE</span>
+        <div className="max-w-7xl mx-auto px-3 sm:px-4 md:px-6 py-3 sm:py-4 flex items-center justify-between">
+          <div className="flex items-center gap-2 sm:gap-3">
+            <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-lg bg-primary flex items-center justify-center">
+              <span className="text-primary-foreground font-bold text-base sm:text-lg">ACE</span>
             </div>
             <div>
-              <h1 className="text-lg font-semibold text-foreground">Ace Image Organizer</h1>
-              <p className="text-xs text-muted-foreground">Cloud Integration</p>
+              <h1 className="text-base sm:text-lg md:text-xl font-semibold text-foreground">Ace Image Organizer</h1>
+              <p className="text-xs sm:text-sm text-muted-foreground hidden sm:block">Cloud Integration</p>
             </div>
           </div>
           <ThemeToggle />
         </div>
       </header>
 
-      <main className="py-8">
+      <main className="py-4 sm:py-6 md:py-8">
         <ImageUploadForm onSubmit={handleUpload} />
       </main>
     </div>

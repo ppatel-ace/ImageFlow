@@ -296,24 +296,24 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
   const partNumber = form.watch("partNumber");
 
   return (
-    <div className="w-full max-w-3xl mx-auto p-6 space-y-6">
-      <div className="text-center space-y-2">
-        <h1 className="text-3xl font-semibold text-foreground">Ace Image Organizer</h1>
-        <p className="text-muted-foreground text-lg">Capture and organize images</p>
+    <div className="w-full max-w-3xl mx-auto px-3 sm:px-4 md:px-6 space-y-4 sm:space-y-6">
+      <div className="text-center space-y-1 sm:space-y-2">
+        <h1 className="text-2xl sm:text-3xl md:text-4xl font-semibold text-foreground">Ace Image Organizer</h1>
+        <p className="text-muted-foreground text-base sm:text-lg">Capture and organize images</p>
       </div>
 
-      <form onSubmit={form.handleSubmit(handleFormSubmit)} className="space-y-6">
-        <Card className="p-6 space-y-6">
-          <div className="space-y-4">
+      <form onSubmit={form.handleSubmit(handleFormSubmit)} className="space-y-4 sm:space-y-6">
+        <Card className="p-4 sm:p-6 space-y-4 sm:space-y-6">
+          <div className="space-y-3 sm:space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="dept" className="text-lg font-medium">
+              <Label htmlFor="dept" className="text-base sm:text-lg font-medium">
                 Dept <span className="text-destructive">*</span>
               </Label>
               <Select
                 value={form.watch("dept")}
                 onValueChange={(value) => form.setValue("dept", value)}
               >
-                <SelectTrigger className="min-h-14 text-base" data-testid="select-dept">
+                <SelectTrigger className="min-h-12 sm:min-h-14 text-base" data-testid="select-dept">
                   <SelectValue placeholder="Select department" />
                 </SelectTrigger>
                 <SelectContent>
@@ -327,7 +327,7 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="partNumber" className="text-lg font-medium">
+              <Label htmlFor="partNumber" className="text-base sm:text-lg font-medium">
                 Part # <span className="text-destructive">*</span>
               </Label>
               <Input
@@ -335,7 +335,7 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
                 data-testid="input-part-number"
                 {...form.register("partNumber")}
                 placeholder="Enter part number"
-                className="min-h-14 text-base font-mono"
+                className="min-h-12 sm:min-h-14 text-base font-mono"
               />
               {form.formState.errors.partNumber && (
                 <p className="text-sm text-destructive">{form.formState.errors.partNumber.message}</p>
@@ -343,7 +343,7 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="rev" className="text-lg font-medium">
+              <Label htmlFor="rev" className="text-base sm:text-lg font-medium">
                 Rev. <span className="text-destructive">*</span>
               </Label>
               <Input
@@ -351,7 +351,7 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
                 data-testid="input-rev"
                 {...form.register("rev")}
                 placeholder="Enter revision"
-                className="min-h-14 text-base"
+                className="min-h-12 sm:min-h-14 text-base"
               />
               {form.formState.errors.rev && (
                 <p className="text-sm text-destructive">{form.formState.errors.rev.message}</p>
@@ -359,7 +359,7 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="customerName" className="text-lg font-medium">
+              <Label htmlFor="customerName" className="text-base sm:text-lg font-medium">
                 Customer Name <span className="text-destructive">*</span>
               </Label>
               <div className="relative">
@@ -368,7 +368,7 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
                   data-testid="input-customer-name"
                   {...form.register("customerName")}
                   placeholder="Enter customer name"
-                  className="min-h-14 text-base"
+                  className="min-h-12 sm:min-h-14 text-base"
                   onFocus={() => customerNames.length > 0 && setCustomerNameOpen(true)}
                   onBlur={() => setTimeout(() => setCustomerNameOpen(false), 200)}
                 />
@@ -421,7 +421,7 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="workOrderNumber" className="text-lg font-medium">
+              <Label htmlFor="workOrderNumber" className="text-base sm:text-lg font-medium">
                 Work Order # <span className="text-destructive">*</span>
               </Label>
               <Input
@@ -429,7 +429,7 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
                 data-testid="input-work-order"
                 {...form.register("workOrderNumber")}
                 placeholder="Enter work order number"
-                className="min-h-14 text-base font-mono"
+                className="min-h-12 sm:min-h-14 text-base font-mono"
               />
               {form.formState.errors.workOrderNumber && (
                 <p className="text-sm text-destructive">{form.formState.errors.workOrderNumber.message}</p>
@@ -437,10 +437,10 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
             </div>
 
             <div className="space-y-2">
-              <Label className="text-lg font-medium">
+              <Label className="text-base sm:text-lg font-medium">
                 Image <span className="text-destructive">*</span>
               </Label>
-              <div className="flex gap-3">
+              <div className="flex flex-col sm:flex-row gap-3">
                 <input
                   type="file"
                   accept="image/*"
@@ -462,7 +462,7 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
                   type="button"
                   variant="outline"
                   size="lg"
-                  className="flex-1 min-h-14"
+                  className="w-full sm:flex-1 min-h-12 sm:min-h-14"
                   onClick={() => document.getElementById("camera-input")?.click()}
                   data-testid="button-camera"
                 >
@@ -473,7 +473,7 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
                   type="button"
                   variant="outline"
                   size="lg"
-                  className="flex-1 min-h-14"
+                  className="w-full sm:flex-1 min-h-12 sm:min-h-14"
                   onClick={() => document.getElementById("gallery-input")?.click()}
                   data-testid="button-gallery"
                 >
@@ -489,9 +489,9 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
         </Card>
 
         {imagePreview && (
-          <Card className="p-6">
-            <div className="space-y-4">
-              <h3 className="text-lg font-medium">Image Preview</h3>
+          <Card className="p-4 sm:p-6">
+            <div className="space-y-3 sm:space-y-4">
+              <h3 className="text-base sm:text-lg font-medium">Image Preview</h3>
               <div className="relative aspect-video bg-muted rounded-lg overflow-hidden">
                 <img src={imagePreview} alt="Preview" className="w-full h-full object-contain" />
               </div>
@@ -512,12 +512,12 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
         )}
 
         {(customerName || dept || workOrderNumber) && (
-          <Card className="p-6 bg-accent/50">
-            <div className="flex items-start gap-3">
-              <FolderOpen className="w-5 h-5 text-primary mt-0.5" />
-              <div className="flex-1">
-                <h3 className="text-sm font-medium text-muted-foreground mb-1">Folder Path</h3>
-                <p className="font-mono text-base text-foreground" data-testid="text-folder-path">
+          <Card className="p-4 sm:p-6 bg-accent/50">
+            <div className="flex items-start gap-2 sm:gap-3">
+              <FolderOpen className="w-4 h-4 sm:w-5 sm:h-5 text-primary mt-0.5 shrink-0" />
+              <div className="flex-1 min-w-0">
+                <h3 className="text-xs sm:text-sm font-medium text-muted-foreground mb-1">Folder Path</h3>
+                <p className="font-mono text-sm sm:text-base text-foreground break-all" data-testid="text-folder-path">
                   ACE / {customerName || "[Customer Name]"} / {dept || "[Dept]"} / {workOrderNumber || "[Work Order #]"}
                 </p>
               </div>
@@ -525,12 +525,12 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
           </Card>
         )}
 
-        <div className="flex gap-3">
+        <div className="flex flex-col sm:flex-row gap-3">
           <Button
             type="button"
             variant="outline"
             size="lg"
-            className="flex-1 min-h-14"
+            className="w-full sm:flex-1 min-h-12 sm:min-h-14"
             onClick={() => {
               form.reset({
                 dept: "",
@@ -551,7 +551,7 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
             type="button"
             variant="secondary"
             size="lg"
-            className="flex-1 min-h-14"
+            className="w-full sm:flex-1 min-h-12 sm:min-h-14"
             onClick={handleSaveLocally}
             disabled={isUploading || isSavingLocal || isUploadingSharePoint || !selectedFile}
             data-testid="button-save-local"
@@ -570,11 +570,11 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
           </Button>
         </div>
         
-        <div className="flex gap-3">
+        <div className="flex flex-col sm:flex-row gap-3">
           <Button
             type="submit"
             size="lg"
-            className="flex-1 min-h-14"
+            className="w-full sm:flex-1 min-h-12 sm:min-h-14"
             disabled={isUploading || isSavingLocal || isUploadingSharePoint || !selectedFile}
             data-testid="button-upload"
           >
@@ -598,7 +598,7 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
           <Button
             type="button"
             size="lg"
-            className="flex-1 min-h-14"
+            className="w-full sm:flex-1 min-h-12 sm:min-h-14"
             onClick={handleSharePointUpload}
             disabled={isUploading || isSavingLocal || isUploadingSharePoint || !selectedFile}
             data-testid="button-upload-sharepoint"

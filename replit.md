@@ -63,11 +63,15 @@ Preferred communication style: Simple, everyday language.
 
 ### Design Decisions
 
-**Tablet-First Responsive Design**
-- Larger typography scale (18px body text, 32px headings) for improved readability on tablets
-- Generous spacing primitives (Tailwind units: 3, 4, 6, 8, 12, 16) for touch accessibility
-- Form fields with minimum 48px touch targets and 6-unit spacing between fields
-- Cards and sections with 6-8 unit padding for comfortable content density
+**Responsive Design (Mobile & Tablet)**
+- Responsive breakpoints: Mobile (<640px), Tablet/Desktop (≥640px)
+- Mobile: Buttons stack vertically, compact spacing (px-3, min-h-12), smaller text (text-base)
+- Tablet: Buttons display horizontally, generous spacing (px-4-6, min-h-14), larger text (text-lg)
+- Adaptive typography: Scales from base sizes on mobile to larger sizes on tablet
+- Touch-friendly targets: 48px minimum height on mobile, 56px on tablet
+- Button groups use flex-col on mobile, flex-row on tablet for optimal layout
+- Folder paths use break-all for text wrapping on small screens
+- Header elements scale appropriately (logo, title, spacing) across devices
 
 **Theme System**
 - CSS custom properties for dynamic theming
