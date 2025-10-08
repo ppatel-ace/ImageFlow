@@ -31,6 +31,7 @@ Preferred communication style: Simple, everyday language.
 - Zod schema validation integrated via @hookform/resolvers
 - Local storage persistence for form data (part numbers, customer names, work orders, dept, and rev values)
 - Real-time localStorage sync: Dept and Rev fields save automatically on change (not just on submit)
+- Customer Name dropdown with history: Shows last 10 customer names with always-visible delete buttons (touch-friendly)
 
 **State Management Pattern**
 - React Context for theme management (light/dark mode)

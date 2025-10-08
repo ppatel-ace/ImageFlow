@@ -7,7 +7,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Camera, Upload, FolderOpen, CheckCircle2, Loader2, Image as ImageIcon, Download } from "lucide-react";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Command, CommandEmpty, CommandGroup, CommandItem, CommandList } from "@/components/ui/command";
+import { Camera, Upload, FolderOpen, CheckCircle2, Loader2, Image as ImageIcon, Download, X } from "lucide-react";
 import { format } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
 
@@ -34,7 +36,21 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
   const [isSavingLocal, setIsSavingLocal] = useState(false);
   const [isUploadingSharePoint, setIsUploadingSharePoint] = useState(false);
   const [sharePointSuccess, setSharePointSuccess] = useState(false);
+  const [customerNameOpen, setCustomerNameOpen] = useState(false);
+  const [customerNames, setCustomerNames] = useState<string[]>([]);
   const { toast } = useToast();
+
+  // Load customer names from localStorage on mount
+  useEffect(() => {
+    const savedNames = localStorage.getItem("customerNames");
+    if (savedNames) {
+      try {
+        setCustomerNames(JSON.parse(savedNames));
+      } catch (e) {
+        setCustomerNames([]);
+      }
+    }
+  }, []);
 
   const lastDept = localStorage.getItem("lastDept") || "";
   const lastPartNumber = localStorage.getItem("lastPartNumber") || "";
@@ -92,6 +108,13 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
       localStorage.setItem("lastCustomerName", data.customerName);
       localStorage.setItem("lastWorkOrderNumber", data.workOrderNumber);
       
+      // Add customer name to history if not already present
+      if (data.customerName && !customerNames.includes(data.customerName)) {
+        const updatedNames = [data.customerName, ...customerNames].slice(0, 10); // Keep last 10
+        setCustomerNames(updatedNames);
+        localStorage.setItem("customerNames", JSON.stringify(updatedNames));
+      }
+      
       const timestamp = format(new Date(), "yyyyMMdd-HHmmss");
       const imageName = `${data.partNumber}Rev${data.rev}-${timestamp}`;
       await onSubmit({ ...data, imageName });
@@ -113,6 +136,12 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
     } finally {
       setIsUploading(false);
     }
+  };
+
+  const deleteCustomerName = (nameToDelete: string) => {
+    const updatedNames = customerNames.filter(name => name !== nameToDelete);
+    setCustomerNames(updatedNames);
+    localStorage.setItem("customerNames", JSON.stringify(updatedNames));
   };
 
   const handleSaveLocally = async () => {
@@ -334,13 +363,62 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
               <Label htmlFor="customerName" className="text-lg font-medium">
                 Customer Name <span className="text-destructive">*</span>
               </Label>
-              <Input
-                id="customerName"
-                data-testid="input-customer-name"
-                {...form.register("customerName")}
-                placeholder="Enter customer name"
-                className="min-h-14 text-base"
-              />
+              <Popover open={customerNameOpen} onOpenChange={setCustomerNameOpen}>
+                <PopoverTrigger asChild>
+                  <div className="relative">
+                    <Input
+                      id="customerName"
+                      data-testid="input-customer-name"
+                      {...form.register("customerName")}
+                      placeholder="Enter customer name"
+                      className="min-h-14 text-base"
+                      onFocus={() => customerNames.length > 0 && setCustomerNameOpen(true)}
+                    />
+                  </div>
+                </PopoverTrigger>
+                {customerNames.length > 0 && (
+                  <PopoverContent className="w-full p-0" align="start">
+                    <Command>
+                      <CommandList>
+                        <CommandEmpty>No recent customers</CommandEmpty>
+                        <CommandGroup>
+                          {customerNames.map((name) => (
+                            <CommandItem
+                              key={name}
+                              onSelect={() => {
+                                form.setValue("customerName", name);
+                                setCustomerNameOpen(false);
+                              }}
+                              className="flex items-center justify-between gap-2"
+                              data-testid={`customer-option-${name}`}
+                            >
+                              <span className="flex-1">{name}</span>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8 shrink-0"
+                                onMouseDown={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                }}
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  deleteCustomerName(name);
+                                }}
+                                data-testid={`delete-customer-${name}`}
+                              >
+                                <X className="h-4 w-4" />
+                              </Button>
+                            </CommandItem>
+                          ))}
+                        </CommandGroup>
+                      </CommandList>
+                    </Command>
+                  </PopoverContent>
+                )}
+              </Popover>
               {form.formState.errors.customerName && (
                 <p className="text-sm text-destructive">{form.formState.errors.customerName.message}</p>
               )}
