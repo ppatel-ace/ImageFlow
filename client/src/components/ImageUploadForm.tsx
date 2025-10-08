@@ -6,11 +6,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card } from "@/components/ui/card";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Camera, Upload, FolderOpen, CheckCircle2, Loader2, Image as ImageIcon, Download } from "lucide-react";
 import { format } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
 
 const uploadFormSchema = z.object({
+  dept: z.string().min(1, "Dept is required"),
   partNumber: z.string().min(1, "Part # is required"),
   customerName: z.string().min(1, "Customer name is required"),
   workOrderNumber: z.string().min(1, "Work Order # is required"),
@@ -33,6 +35,7 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
   const [sharePointSuccess, setSharePointSuccess] = useState(false);
   const { toast } = useToast();
 
+  const lastDept = localStorage.getItem("lastDept") || "";
   const lastPartNumber = localStorage.getItem("lastPartNumber") || "";
   const lastCustomerName = localStorage.getItem("lastCustomerName") || "";
   const lastWorkOrderNumber = localStorage.getItem("lastWorkOrderNumber") || "";
@@ -40,6 +43,7 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
   const form = useForm<UploadFormData>({
     resolver: zodResolver(uploadFormSchema),
     defaultValues: {
+      dept: lastDept,
       partNumber: lastPartNumber,
       customerName: lastCustomerName,
       workOrderNumber: lastWorkOrderNumber,
@@ -63,6 +67,7 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
   const handleFormSubmit = async (data: UploadFormData) => {
     setIsUploading(true);
     try {
+      localStorage.setItem("lastDept", data.dept);
       localStorage.setItem("lastPartNumber", data.partNumber);
       localStorage.setItem("lastCustomerName", data.customerName);
       localStorage.setItem("lastWorkOrderNumber", data.workOrderNumber);
@@ -74,6 +79,7 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
       setTimeout(() => {
         setUploadSuccess(false);
         form.reset({
+          dept: data.dept,
           partNumber: data.partNumber,
           customerName: data.customerName,
           workOrderNumber: data.workOrderNumber,
@@ -89,7 +95,7 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
   };
 
   const handleSaveLocally = async () => {
-    if (!selectedFile || !customerName || !workOrderNumber || !partNumber) {
+    if (!selectedFile || !dept || !customerName || !workOrderNumber || !partNumber) {
       toast({
         title: "Missing Information",
         description: "Please fill in all fields and select an image before saving.",
@@ -170,7 +176,7 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
   };
 
   const handleSharePointUpload = async () => {
-    if (!selectedFile || !customerName || !workOrderNumber || !partNumber) {
+    if (!selectedFile || !dept || !customerName || !workOrderNumber || !partNumber) {
       toast({
         title: "Missing Information",
         description: "Please fill in all fields and select an image before uploading.",
@@ -232,6 +238,7 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
     }
   };
 
+  const dept = form.watch("dept");
   const customerName = form.watch("customerName");
   const workOrderNumber = form.watch("workOrderNumber");
   const partNumber = form.watch("partNumber");
@@ -246,6 +253,27 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
       <form onSubmit={form.handleSubmit(handleFormSubmit)} className="space-y-6">
         <Card className="p-6 space-y-6">
           <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="dept" className="text-lg font-medium">
+                Dept <span className="text-destructive">*</span>
+              </Label>
+              <Select
+                value={form.watch("dept")}
+                onValueChange={(value) => form.setValue("dept", value)}
+              >
+                <SelectTrigger className="min-h-14 text-base" data-testid="select-dept">
+                  <SelectValue placeholder="Select department" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="QC">QC</SelectItem>
+                  <SelectItem value="Testing">Testing</SelectItem>
+                </SelectContent>
+              </Select>
+              {form.formState.errors.dept && (
+                <p className="text-sm text-destructive">{form.formState.errors.dept.message}</p>
+              )}
+            </div>
+
             <div className="space-y-2">
               <Label htmlFor="partNumber" className="text-lg font-medium">
                 Part # <span className="text-destructive">*</span>
@@ -391,6 +419,7 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
             className="flex-1 min-h-14"
             onClick={() => {
               form.reset({
+                dept: "",
                 partNumber: "",
                 customerName: "",
                 workOrderNumber: "",
