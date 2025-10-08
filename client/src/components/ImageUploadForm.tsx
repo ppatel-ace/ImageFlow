@@ -7,7 +7,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Command, CommandEmpty, CommandGroup, CommandItem, CommandList } from "@/components/ui/command";
 import { Camera, Upload, FolderOpen, CheckCircle2, Loader2, Image as ImageIcon, Download, X } from "lucide-react";
 import { format } from "date-fns";
@@ -363,21 +362,18 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
               <Label htmlFor="customerName" className="text-lg font-medium">
                 Customer Name <span className="text-destructive">*</span>
               </Label>
-              <Popover open={customerNameOpen} onOpenChange={setCustomerNameOpen}>
-                <PopoverTrigger asChild>
-                  <div className="relative">
-                    <Input
-                      id="customerName"
-                      data-testid="input-customer-name"
-                      {...form.register("customerName")}
-                      placeholder="Enter customer name"
-                      className="min-h-14 text-base"
-                      onFocus={() => customerNames.length > 0 && setCustomerNameOpen(true)}
-                    />
-                  </div>
-                </PopoverTrigger>
-                {customerNames.length > 0 && (
-                  <PopoverContent className="w-full p-0" align="start">
+              <div className="relative">
+                <Input
+                  id="customerName"
+                  data-testid="input-customer-name"
+                  {...form.register("customerName")}
+                  placeholder="Enter customer name"
+                  className="min-h-14 text-base"
+                  onFocus={() => customerNames.length > 0 && setCustomerNameOpen(true)}
+                  onBlur={() => setTimeout(() => setCustomerNameOpen(false), 200)}
+                />
+                {customerNameOpen && customerNames.length > 0 && (
+                  <div className="absolute z-50 w-full mt-1 rounded-md border bg-popover p-0 shadow-md">
                     <Command>
                       <CommandList>
                         <CommandEmpty>No recent customers</CommandEmpty>
@@ -416,9 +412,9 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
                         </CommandGroup>
                       </CommandList>
                     </Command>
-                  </PopoverContent>
+                  </div>
                 )}
-              </Popover>
+              </div>
               {form.formState.errors.customerName && (
                 <p className="text-sm text-destructive">{form.formState.errors.customerName.message}</p>
               )}
