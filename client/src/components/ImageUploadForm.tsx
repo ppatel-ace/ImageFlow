@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -52,6 +52,22 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
       workOrderNumber: lastWorkOrderNumber,
     },
   });
+
+  // Watch dept and rev fields and save to localStorage when they change
+  const dept = form.watch("dept");
+  const rev = form.watch("rev");
+
+  useEffect(() => {
+    if (dept) {
+      localStorage.setItem("lastDept", dept);
+    }
+  }, [dept]);
+
+  useEffect(() => {
+    if (rev) {
+      localStorage.setItem("lastRev", rev);
+    }
+  }, [rev]);
 
   const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -247,11 +263,9 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
     }
   };
 
-  const dept = form.watch("dept");
   const customerName = form.watch("customerName");
   const workOrderNumber = form.watch("workOrderNumber");
   const partNumber = form.watch("partNumber");
-  const rev = form.watch("rev");
 
   return (
     <div className="w-full max-w-3xl mx-auto p-6 space-y-6">

@@ -29,7 +29,8 @@ Preferred communication style: Simple, everyday language.
 **Form Management**
 - React Hook Form for performant form state management
 - Zod schema validation integrated via @hookform/resolvers
-- Local storage persistence for form data (part numbers, customer names, work orders)
+- Local storage persistence for form data (part numbers, customer names, work orders, dept, and rev values)
+- Real-time localStorage sync: Dept and Rev fields save automatically on change (not just on submit)
 
 **State Management Pattern**
 - React Context for theme management (light/dark mode)
@@ -77,7 +78,8 @@ Preferred communication style: Simple, everyday language.
 **Image Upload Flow**
 - Camera input prioritized for direct capture on tablet devices
 - Image preview before upload for quality confirmation
-- Automatic file naming with work order numbers for organization
+- Automatic file naming format: {partNumber}{rev}-{timestamp}.{extension} (e.g., ABC123A-20250108-151500.jpg)
+- Folder structure: ACE/CustomerName/Dept/WorkOrderNumber
 - Local save option for offline scenarios or backup purposes
 
 **Development Experience**
