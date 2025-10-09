@@ -7,8 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Command, CommandEmpty, CommandGroup, CommandItem, CommandList } from "@/components/ui/command";
-import { Camera, Upload, FolderOpen, CheckCircle2, Loader2, Image as ImageIcon, Download, X } from "lucide-react";
+import { Camera, Upload, FolderOpen, CheckCircle2, Loader2, Image as ImageIcon, Download } from "lucide-react";
 import { format } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
 import { useQuery } from "@tanstack/react-query";
@@ -36,8 +35,6 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
   const [isSavingLocal, setIsSavingLocal] = useState(false);
   const [isUploadingSharePoint, setIsUploadingSharePoint] = useState(false);
   const [sharePointSuccess, setSharePointSuccess] = useState(false);
-  const [customerNameOpen, setCustomerNameOpen] = useState(false);
-  const [customerNames, setCustomerNames] = useState<string[]>([]);
   const [partNumberOptions, setPartNumberOptions] = useState<{ partNumber: string; rev: string; customerName: string }[]>([]);
   const { toast } = useToast();
 
@@ -46,18 +43,6 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
     queryKey: ['/api/work-orders'],
     staleTime: Infinity,
   });
-
-  // Load customer names from localStorage on mount
-  useEffect(() => {
-    const savedNames = localStorage.getItem("customerNames");
-    if (savedNames) {
-      try {
-        setCustomerNames(JSON.parse(savedNames));
-      } catch (e) {
-        setCustomerNames([]);
-      }
-    }
-  }, []);
 
   const lastDept = localStorage.getItem("lastDept") || "";
   const lastPartNumber = localStorage.getItem("lastPartNumber") || "";
@@ -154,13 +139,6 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
       localStorage.setItem("lastCustomerName", data.customerName);
       localStorage.setItem("lastWorkOrderNumber", data.workOrderNumber);
       
-      // Add customer name to history if not already present
-      if (data.customerName && !customerNames.includes(data.customerName)) {
-        const updatedNames = [data.customerName, ...customerNames].slice(0, 10); // Keep last 10
-        setCustomerNames(updatedNames);
-        localStorage.setItem("customerNames", JSON.stringify(updatedNames));
-      }
-      
       const timestamp = format(new Date(), "yyyyMMdd-HHmmss");
       const imageName = `${data.partNumber}Rev${data.rev}-${timestamp}`;
       await onSubmit({ ...data, imageName });
@@ -182,12 +160,6 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
     } finally {
       setIsUploading(false);
     }
-  };
-
-  const deleteCustomerName = (nameToDelete: string) => {
-    const updatedNames = customerNames.filter(name => name !== nameToDelete);
-    setCustomerNames(updatedNames);
-    localStorage.setItem("customerNames", JSON.stringify(updatedNames));
   };
 
   const handleSaveLocally = async () => {
@@ -415,8 +387,8 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
                   <SelectValue placeholder={workOrderNumber ? (partNumberOptions.length > 0 ? "Select part number" : "No parts for this work order") : "Select work order first"} />
                 </SelectTrigger>
                 <SelectContent>
-                  {partNumberOptions.map((part) => (
-                    <SelectItem key={part.partNumber} value={part.partNumber}>
+                  {partNumberOptions.map((part, index) => (
+                    <SelectItem key={`${part.partNumber}-${index}`} value={part.partNumber}>
                       {part.partNumber}
                     </SelectItem>
                   ))}
@@ -435,8 +407,9 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
                 id="rev"
                 data-testid="input-rev"
                 {...form.register("rev")}
-                placeholder="Enter revision"
-                className="min-h-12 sm:min-h-14 text-base"
+                placeholder="Auto-filled from Excel"
+                className="min-h-12 sm:min-h-14 text-base bg-muted"
+                readOnly
               />
               {form.formState.errors.rev && (
                 <p className="text-sm text-destructive">{form.formState.errors.rev.message}</p>
@@ -447,59 +420,14 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
               <Label htmlFor="customerName" className="text-base sm:text-lg font-medium">
                 Customer Name <span className="text-destructive">*</span>
               </Label>
-              <div className="relative">
-                <Input
-                  id="customerName"
-                  data-testid="input-customer-name"
-                  {...form.register("customerName")}
-                  placeholder="Enter customer name"
-                  className="min-h-12 sm:min-h-14 text-base"
-                  onFocus={() => customerNames.length > 0 && setCustomerNameOpen(true)}
-                  onBlur={() => setTimeout(() => setCustomerNameOpen(false), 200)}
-                />
-                {customerNameOpen && customerNames.length > 0 && (
-                  <div className="absolute z-50 w-full mt-1 rounded-md border bg-popover p-0 shadow-md">
-                    <Command>
-                      <CommandList>
-                        <CommandEmpty>No recent customers</CommandEmpty>
-                        <CommandGroup>
-                          {customerNames.map((name) => (
-                            <CommandItem
-                              key={name}
-                              onSelect={() => {
-                                form.setValue("customerName", name);
-                                setCustomerNameOpen(false);
-                              }}
-                              className="flex items-center justify-between gap-2"
-                              data-testid={`customer-option-${name}`}
-                            >
-                              <span className="flex-1">{name}</span>
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="icon"
-                                className="h-8 w-8 shrink-0"
-                                onMouseDown={(e) => {
-                                  e.preventDefault();
-                                  e.stopPropagation();
-                                }}
-                                onClick={(e) => {
-                                  e.preventDefault();
-                                  e.stopPropagation();
-                                  deleteCustomerName(name);
-                                }}
-                                data-testid={`delete-customer-${name}`}
-                              >
-                                <X className="h-4 w-4" />
-                              </Button>
-                            </CommandItem>
-                          ))}
-                        </CommandGroup>
-                      </CommandList>
-                    </Command>
-                  </div>
-                )}
-              </div>
+              <Input
+                id="customerName"
+                data-testid="input-customer-name"
+                {...form.register("customerName")}
+                placeholder="Auto-filled from Excel"
+                className="min-h-12 sm:min-h-14 text-base bg-muted"
+                readOnly
+              />
               {form.formState.errors.customerName && (
                 <p className="text-sm text-destructive">{form.formState.errors.customerName.message}</p>
               )}
