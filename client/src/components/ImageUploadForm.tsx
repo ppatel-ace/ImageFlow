@@ -11,6 +11,7 @@ import { Command, CommandEmpty, CommandGroup, CommandItem, CommandList } from "@
 import { Camera, Upload, FolderOpen, CheckCircle2, Loader2, Image as ImageIcon, Download, X } from "lucide-react";
 import { format } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
+import { useQuery } from "@tanstack/react-query";
 
 const uploadFormSchema = z.object({
   dept: z.string().min(1, "Dept is required"),
@@ -37,7 +38,14 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
   const [sharePointSuccess, setSharePointSuccess] = useState(false);
   const [customerNameOpen, setCustomerNameOpen] = useState(false);
   const [customerNames, setCustomerNames] = useState<string[]>([]);
+  const [partNumberOptions, setPartNumberOptions] = useState<{ partNumber: string; rev: string; customerName: string }[]>([]);
   const { toast } = useToast();
+
+  // Fetch all work orders
+  const { data: workOrders = [] } = useQuery<string[]>({
+    queryKey: ['/api/work-orders'],
+    staleTime: Infinity,
+  });
 
   // Load customer names from localStorage on mount
   useEffect(() => {
@@ -71,6 +79,45 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
   // Watch dept and rev fields and save to localStorage when they change
   const dept = form.watch("dept");
   const rev = form.watch("rev");
+  const workOrderNumber = form.watch("workOrderNumber");
+
+  // Fetch part numbers when work order is selected
+  useEffect(() => {
+    const fetchPartNumbers = async () => {
+      if (workOrderNumber) {
+        try {
+          const response = await fetch(`/api/part-numbers/${encodeURIComponent(workOrderNumber)}`);
+          if (response.ok) {
+            const data = await response.json();
+            setPartNumberOptions(data);
+          } else {
+            setPartNumberOptions([]);
+          }
+        } catch (error) {
+          console.error("Error fetching part numbers:", error);
+          setPartNumberOptions([]);
+        }
+      } else {
+        setPartNumberOptions([]);
+      }
+    };
+
+    fetchPartNumbers();
+  }, [workOrderNumber]);
+
+  // Auto-populate rev and customer name when part number is selected
+  const handlePartNumberSelect = (selectedPartNumber: string) => {
+    form.setValue("partNumber", selectedPartNumber);
+    const selectedPart = partNumberOptions.find(p => p.partNumber === selectedPartNumber);
+    if (selectedPart) {
+      if (selectedPart.rev) {
+        form.setValue("rev", selectedPart.rev);
+      }
+      if (selectedPart.customerName) {
+        form.setValue("customerName", selectedPart.customerName);
+      }
+    }
+  };
 
   useEffect(() => {
     if (dept) {
@@ -292,7 +339,6 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
   };
 
   const customerName = form.watch("customerName");
-  const workOrderNumber = form.watch("workOrderNumber");
   const partNumber = form.watch("partNumber");
 
   return (
@@ -327,16 +373,55 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
             </div>
 
             <div className="space-y-2">
+              <Label htmlFor="workOrderNumber" className="text-base sm:text-lg font-medium">
+                Work Order # <span className="text-destructive">*</span>
+              </Label>
+              <Select
+                value={form.watch("workOrderNumber")}
+                onValueChange={(value) => {
+                  form.setValue("workOrderNumber", value);
+                  // Clear part number when work order changes
+                  form.setValue("partNumber", "");
+                  form.setValue("rev", "");
+                  form.setValue("customerName", "");
+                }}
+              >
+                <SelectTrigger className="min-h-12 sm:min-h-14 text-base font-mono" data-testid="select-work-order">
+                  <SelectValue placeholder="Select work order" />
+                </SelectTrigger>
+                <SelectContent>
+                  {workOrders.map((wo) => (
+                    <SelectItem key={wo} value={wo}>
+                      {wo}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {form.formState.errors.workOrderNumber && (
+                <p className="text-sm text-destructive">{form.formState.errors.workOrderNumber.message}</p>
+              )}
+            </div>
+
+            <div className="space-y-2">
               <Label htmlFor="partNumber" className="text-base sm:text-lg font-medium">
                 Part # <span className="text-destructive">*</span>
               </Label>
-              <Input
-                id="partNumber"
-                data-testid="input-part-number"
-                {...form.register("partNumber")}
-                placeholder="Enter part number"
-                className="min-h-12 sm:min-h-14 text-base font-mono"
-              />
+              <Select
+                value={form.watch("partNumber")}
+                onValueChange={handlePartNumberSelect}
+                disabled={!workOrderNumber || partNumberOptions.length === 0}
+              >
+                <SelectTrigger className="min-h-12 sm:min-h-14 text-base font-mono" data-testid="select-part-number">
+                  <SelectValue placeholder={workOrderNumber ? (partNumberOptions.length > 0 ? "Select part number" : "No parts for this work order") : "Select work order first"} />
+                </SelectTrigger>
+                <SelectContent>
+                  {partNumberOptions.map((part) => (
+                    <SelectItem key={part.partNumber} value={part.partNumber}>
+                      {part.partNumber}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
               {form.formState.errors.partNumber && (
                 <p className="text-sm text-destructive">{form.formState.errors.partNumber.message}</p>
               )}
@@ -417,22 +502,6 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
               </div>
               {form.formState.errors.customerName && (
                 <p className="text-sm text-destructive">{form.formState.errors.customerName.message}</p>
-              )}
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="workOrderNumber" className="text-base sm:text-lg font-medium">
-                Work Order # <span className="text-destructive">*</span>
-              </Label>
-              <Input
-                id="workOrderNumber"
-                data-testid="input-work-order"
-                {...form.register("workOrderNumber")}
-                placeholder="Enter work order number"
-                className="min-h-12 sm:min-h-14 text-base font-mono"
-              />
-              {form.formState.errors.workOrderNumber && (
-                <p className="text-sm text-destructive">{form.formState.errors.workOrderNumber.message}</p>
               )}
             </div>
 

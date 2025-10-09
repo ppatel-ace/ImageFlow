@@ -4,6 +4,7 @@ import { storage } from "./storage";
 import multer from "multer";
 import { uploadFileToOneDrive } from "./onedrive";
 import { uploadFileToSharePoint } from "./sharepoint";
+import { getAllWorkOrders, getPartNumbersByWorkOrder, getRevByPartNumber } from "./excelParser";
 
 const upload = multer({ storage: multer.memoryStorage() });
 
@@ -89,6 +90,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
         error: "Upload failed", 
         message: error.message 
       });
+    }
+  });
+
+  // Excel data endpoints
+  app.get("/api/work-orders", (req, res) => {
+    try {
+      const workOrders = getAllWorkOrders();
+      res.json(workOrders);
+    } catch (error: any) {
+      console.error("Error fetching work orders:", error);
+      res.status(500).json({ error: "Failed to fetch work orders" });
+    }
+  });
+
+  app.get("/api/part-numbers/:workOrder", (req, res) => {
+    try {
+      const { workOrder } = req.params;
+      const partNumbers = getPartNumbersByWorkOrder(workOrder);
+      res.json(partNumbers);
+    } catch (error: any) {
+      console.error("Error fetching part numbers:", error);
+      res.status(500).json({ error: "Failed to fetch part numbers" });
     }
   });
 
