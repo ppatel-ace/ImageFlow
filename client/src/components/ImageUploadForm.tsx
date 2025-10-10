@@ -382,6 +382,13 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
                   }}
                   onFocus={() => setWorkOrderOpen(true)}
                   onBlur={() => {
+                    // Remove trailing zeros when user finishes typing
+                    let value = workOrderSearch;
+                    if (value.length > 0 && /[1-9]/.test(value)) {
+                      value = value.replace(/0+$/, '');
+                      setWorkOrderSearch(value);
+                      form.setValue("workOrderNumber", value);
+                    }
                     // Close dropdown after a small delay to allow clicking items
                     setTimeout(() => setWorkOrderOpen(false), 200);
                   }}
