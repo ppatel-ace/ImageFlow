@@ -370,26 +370,27 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
                 Work Order # <span className="text-destructive">*</span>
               </Label>
               <Popover open={workOrderOpen} onOpenChange={setWorkOrderOpen}>
-                <PopoverTrigger asChild>
-                  <div className="relative">
-                    <Input
-                      id="workOrderNumber"
-                      data-testid="input-work-order"
-                      value={workOrderSearch}
-                      onChange={(e) => {
-                        const value = e.target.value;
-                        setWorkOrderSearch(value);
-                        form.setValue("workOrderNumber", value);
-                        setWorkOrderOpen(true);
-                      }}
-                      onFocus={() => setWorkOrderOpen(true)}
-                      placeholder="Type or select work order"
-                      className="min-h-12 sm:min-h-14 text-base font-mono"
-                    />
-                  </div>
-                </PopoverTrigger>
-                <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
-                  <Command>
+                <div className="relative">
+                  <Input
+                    id="workOrderNumber"
+                    data-testid="input-work-order"
+                    value={workOrderSearch}
+                    onChange={(e) => {
+                      const value = e.target.value;
+                      setWorkOrderSearch(value);
+                      form.setValue("workOrderNumber", value);
+                      setWorkOrderOpen(true);
+                    }}
+                    onFocus={() => setWorkOrderOpen(true)}
+                    placeholder="Type or select work order"
+                    className="min-h-12 sm:min-h-14 text-base font-mono"
+                  />
+                  <PopoverTrigger asChild>
+                    <button className="absolute inset-0 opacity-0" tabIndex={-1} />
+                  </PopoverTrigger>
+                </div>
+                <PopoverContent className="w-full p-0" align="start" onOpenAutoFocus={(e) => e.preventDefault()}>
+                  <Command shouldFilter={false}>
                     <CommandList>
                       <CommandEmpty>No work order found.</CommandEmpty>
                       <CommandGroup>
