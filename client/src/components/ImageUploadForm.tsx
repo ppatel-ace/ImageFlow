@@ -369,57 +369,60 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
               <Label htmlFor="workOrderNumber" className="text-base sm:text-lg font-medium">
                 Work Order # <span className="text-destructive">*</span>
               </Label>
-              <Popover open={workOrderOpen} onOpenChange={setWorkOrderOpen}>
-                <div className="relative">
-                  <Input
-                    id="workOrderNumber"
-                    data-testid="input-work-order"
-                    value={workOrderSearch}
-                    onChange={(e) => {
-                      const value = e.target.value;
-                      setWorkOrderSearch(value);
-                      form.setValue("workOrderNumber", value);
-                      setWorkOrderOpen(true);
-                    }}
-                    onFocus={() => setWorkOrderOpen(true)}
-                    placeholder="Type or select work order"
-                    className="min-h-12 sm:min-h-14 text-base font-mono"
-                  />
-                  <PopoverTrigger asChild>
-                    <button className="absolute inset-0 opacity-0" tabIndex={-1} />
-                  </PopoverTrigger>
-                </div>
-                <PopoverContent className="w-full p-0" align="start" onOpenAutoFocus={(e) => e.preventDefault()}>
-                  <Command shouldFilter={false}>
-                    <CommandList>
-                      <CommandEmpty>No work order found.</CommandEmpty>
-                      <CommandGroup>
-                        {workOrders
-                          .filter((wo) => wo.toLowerCase().includes(workOrderSearch.toLowerCase()))
-                          .map((wo) => (
-                            <CommandItem
-                              key={wo}
-                              value={wo}
-                              onSelect={(value) => {
-                                setWorkOrderSearch(value);
-                                form.setValue("workOrderNumber", value);
-                                setWorkOrderOpen(false);
-                              }}
-                            >
-                              <Check
-                                className={cn(
-                                  "mr-2 h-4 w-4",
-                                  form.watch("workOrderNumber") === wo ? "opacity-100" : "opacity-0"
-                                )}
-                              />
-                              {wo}
-                            </CommandItem>
-                          ))}
-                      </CommandGroup>
-                    </CommandList>
-                  </Command>
-                </PopoverContent>
-              </Popover>
+              <div className="relative">
+                <Input
+                  id="workOrderNumber"
+                  data-testid="input-work-order"
+                  value={workOrderSearch}
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    setWorkOrderSearch(value);
+                    form.setValue("workOrderNumber", value);
+                    setWorkOrderOpen(true);
+                  }}
+                  onFocus={() => setWorkOrderOpen(true)}
+                  onBlur={() => {
+                    // Close dropdown after a small delay to allow clicking items
+                    setTimeout(() => setWorkOrderOpen(false), 200);
+                  }}
+                  placeholder="Type or select work order"
+                  className="min-h-12 sm:min-h-14 text-base font-mono"
+                />
+                {workOrderOpen && workOrders.length > 0 && (
+                  <div className="absolute z-50 w-full mt-1 bg-popover border rounded-md shadow-md max-h-60 overflow-auto">
+                    {workOrders
+                      .filter((wo) => wo.toLowerCase().includes(workOrderSearch.toLowerCase()))
+                      .map((wo) => (
+                        <div
+                          key={wo}
+                          className={cn(
+                            "px-3 py-2 cursor-pointer hover-elevate text-sm font-mono flex items-center",
+                            form.watch("workOrderNumber") === wo && "bg-accent"
+                          )}
+                          onMouseDown={(e) => {
+                            e.preventDefault(); // Prevent input blur
+                            setWorkOrderSearch(wo);
+                            form.setValue("workOrderNumber", wo);
+                            setWorkOrderOpen(false);
+                          }}
+                        >
+                          <Check
+                            className={cn(
+                              "mr-2 h-4 w-4",
+                              form.watch("workOrderNumber") === wo ? "opacity-100" : "opacity-0"
+                            )}
+                          />
+                          {wo}
+                        </div>
+                      ))}
+                    {workOrders.filter((wo) => wo.toLowerCase().includes(workOrderSearch.toLowerCase())).length === 0 && (
+                      <div className="px-3 py-2 text-sm text-muted-foreground">
+                        No work order found.
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
               {form.formState.errors.workOrderNumber && (
                 <p className="text-sm text-destructive">{form.formState.errors.workOrderNumber.message}</p>
               )}
