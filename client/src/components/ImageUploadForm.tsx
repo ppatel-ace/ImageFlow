@@ -527,6 +527,7 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
                   size="lg"
                   className="w-full sm:flex-1 min-h-12 sm:min-h-14"
                   onClick={() => document.getElementById("camera-input")?.click()}
+                  disabled={!workOrderMatches}
                   data-testid="button-camera"
                 >
                   <Camera className="w-5 h-5 mr-2" />
@@ -538,6 +539,7 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
                   size="lg"
                   className="w-full sm:flex-1 min-h-12 sm:min-h-14"
                   onClick={() => document.getElementById("gallery-input")?.click()}
+                  disabled={!workOrderMatches}
                   data-testid="button-gallery"
                 >
                   <ImageIcon className="w-5 h-5 mr-2" />
