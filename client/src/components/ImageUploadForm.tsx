@@ -15,6 +15,11 @@ import { useToast } from "@/hooks/use-toast";
 import { useQuery } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
 
+// Sanitize path components by replacing invalid characters with underscore
+const sanitizePath = (value: string): string => {
+  return value.replace(/[<>:"/\\|?*]/g, '_');
+};
+
 const uploadFormSchema = z.object({
   dept: z.string().min(1, "Dept is required"),
   partNumber: z.string().min(1, "Part # is required"),
@@ -171,7 +176,9 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
       localStorage.setItem("lastWorkOrderNumber", data.workOrderNumber);
       
       const timestamp = format(new Date(), "yyyyMMdd-HHmmss");
-      const imageName = `${data.partNumber}Rev${data.rev}-${timestamp}`;
+      const sanitizedPartNumber = sanitizePath(data.partNumber);
+      const sanitizedRev = sanitizePath(data.rev);
+      const imageName = `${sanitizedPartNumber}Rev${sanitizedRev}-${timestamp}`;
       await onSubmit({ ...data, imageName });
       setUploadSuccess(true);
       setTimeout(() => {
@@ -206,7 +213,9 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
     setIsSavingLocal(true);
     try {
       // Sanitize customer name for folder path (replace invalid characters with underscore)
-      const sanitizedCustomerName = customerName.replace(/[<>:"/\\|?*]/g, '_');
+      const sanitizedCustomerName = sanitizePath(customerName);
+      const sanitizedPartNumber = sanitizePath(partNumber);
+      const sanitizedRev = sanitizePath(rev);
       
       // Check if the File System Access API is supported
       if ('showDirectoryPicker' in window) {
@@ -228,7 +237,7 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
         // Generate filename with timestamp
         const timestamp = format(new Date(), "yyyyMMdd-HHmmss");
         const extension = selectedFile.name.split('.').pop() || 'jpg';
-        const filename = `${partNumber}Rev${rev}-${timestamp}.${extension}`;
+        const filename = `${sanitizedPartNumber}Rev${sanitizedRev}-${timestamp}.${extension}`;
         
         // Create and write the file
         const fileHandle = await workOrderFolderHandle.getFileHandle(filename, { create: true });
@@ -244,7 +253,7 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
         // Fallback: simple download with suggested path in filename
         const timestamp = format(new Date(), "yyyyMMdd-HHmmss");
         const extension = selectedFile.name.split('.').pop() || 'jpg';
-        const filename = `${partNumber}Rev${rev}-${timestamp}.${extension}`;
+        const filename = `${sanitizedPartNumber}Rev${sanitizedRev}-${timestamp}.${extension}`;
         
         const url = URL.createObjectURL(selectedFile);
         const a = document.createElement('a');
@@ -293,7 +302,9 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
     setIsUploadingSharePoint(true);
     try {
       const timestamp = format(new Date(), "yyyyMMdd-HHmmss");
-      const imageName = `${partNumber}Rev${form.watch("rev")}-${timestamp}`;
+      const sanitizedPartNumber = sanitizePath(partNumber);
+      const sanitizedRev = sanitizePath(form.watch("rev"));
+      const imageName = `${sanitizedPartNumber}Rev${sanitizedRev}-${timestamp}`;
       
       const formData = new FormData();
       formData.append("imageFile", selectedFile);
