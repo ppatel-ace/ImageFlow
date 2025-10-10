@@ -107,9 +107,14 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
   }, [workOrderNumber, prevWorkOrder, form]);
 
   // Auto-populate rev and customer name when part number is selected
-  const handlePartNumberSelect = (selectedPartNumber: string) => {
-    form.setValue("partNumber", selectedPartNumber);
-    const selectedPart = partNumberOptions.find(p => p.partNumber === selectedPartNumber);
+  const handlePartNumberSelect = (selectedValue: string) => {
+    // Parse the value which is in format "partNumber-index"
+    const lastDashIndex = selectedValue.lastIndexOf('-');
+    const partNumber = selectedValue.substring(0, lastDashIndex);
+    const index = parseInt(selectedValue.substring(lastDashIndex + 1));
+    
+    form.setValue("partNumber", partNumber);
+    const selectedPart = partNumberOptions[index];
     if (selectedPart) {
       if (selectedPart.rev) {
         form.setValue("rev", selectedPart.rev);
@@ -445,7 +450,11 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
                 Part # <span className="text-destructive">*</span>
               </Label>
               <Select
-                value={form.watch("partNumber")}
+                value={partNumber ? `${partNumber}-${partNumberOptions.findIndex(p => 
+                  p.partNumber === partNumber && 
+                  p.rev === rev && 
+                  p.customerName === customerName
+                )}` : ""}
                 onValueChange={handlePartNumberSelect}
                 disabled={!workOrderNumber || partNumberOptions.length === 0}
               >
@@ -454,7 +463,7 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
                 </SelectTrigger>
                 <SelectContent>
                   {partNumberOptions.map((part, index) => (
-                    <SelectItem key={`${part.partNumber}-${index}`} value={part.partNumber}>
+                    <SelectItem key={`${part.partNumber}-${index}`} value={`${part.partNumber}-${index}`}>
                       {part.partNumber}
                     </SelectItem>
                   ))}
