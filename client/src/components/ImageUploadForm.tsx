@@ -41,6 +41,8 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
   const [partNumberOptions, setPartNumberOptions] = useState<{ partNumber: string; rev: string; customerName: string }[]>([]);
   const [workOrderOpen, setWorkOrderOpen] = useState(false);
   const [workOrderSearch, setWorkOrderSearch] = useState("");
+  const [partNumberOpen, setPartNumberOpen] = useState(false);
+  const [partNumberSearch, setPartNumberSearch] = useState("");
   const { toast } = useToast();
 
   // Fetch all work orders
@@ -107,21 +109,18 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
   }, [workOrderNumber, prevWorkOrder, form]);
 
   // Auto-populate rev and customer name when part number is selected
-  const handlePartNumberSelect = (selectedValue: string) => {
-    // Parse the value which is in format "partNumber-index"
-    const lastDashIndex = selectedValue.lastIndexOf('-');
-    const partNumber = selectedValue.substring(0, lastDashIndex);
-    const index = parseInt(selectedValue.substring(lastDashIndex + 1));
-    
-    form.setValue("partNumber", partNumber);
+  const handlePartNumberSelect = (index: number) => {
     const selectedPart = partNumberOptions[index];
     if (selectedPart) {
+      setPartNumberSearch(selectedPart.partNumber);
+      form.setValue("partNumber", selectedPart.partNumber);
       if (selectedPart.rev) {
         form.setValue("rev", selectedPart.rev);
       }
       if (selectedPart.customerName) {
         form.setValue("customerName", selectedPart.customerName);
       }
+      setPartNumberOpen(false);
     }
   };
 
@@ -141,6 +140,12 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
   useEffect(() => {
     setWorkOrderSearch(workOrderNumber);
   }, [workOrderNumber]);
+
+  // Sync partNumberSearch with form value
+  useEffect(() => {
+    const partNumber = form.watch("partNumber");
+    setPartNumberSearch(partNumber);
+  }, [form.watch("partNumber")]);
 
   const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -449,26 +454,64 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
               <Label htmlFor="partNumber" className="text-base sm:text-lg font-medium">
                 Part # <span className="text-destructive">*</span>
               </Label>
-              <Select
-                value={partNumber ? `${partNumber}-${partNumberOptions.findIndex(p => 
-                  p.partNumber === partNumber && 
-                  p.rev === rev && 
-                  p.customerName === customerName
-                )}` : ""}
-                onValueChange={handlePartNumberSelect}
-                disabled={!workOrderNumber || partNumberOptions.length === 0}
-              >
-                <SelectTrigger className="min-h-12 sm:min-h-14 text-base font-mono" data-testid="select-part-number">
-                  <SelectValue placeholder={workOrderNumber ? (partNumberOptions.length > 0 ? "Select part number" : "No parts for this work order") : "Select work order first"} />
-                </SelectTrigger>
-                <SelectContent>
-                  {partNumberOptions.map((part, index) => (
-                    <SelectItem key={`${part.partNumber}-${index}`} value={`${part.partNumber}-${index}`}>
-                      {part.partNumber}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <div className="relative">
+                <Input
+                  id="partNumber"
+                  data-testid="input-part-number"
+                  value={partNumberSearch}
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    setPartNumberSearch(value);
+                    form.setValue("partNumber", value);
+                    setPartNumberOpen(true);
+                  }}
+                  onFocus={() => setPartNumberOpen(true)}
+                  onBlur={() => {
+                    // Close dropdown after a small delay to allow clicking items
+                    setTimeout(() => setPartNumberOpen(false), 200);
+                  }}
+                  placeholder={workOrderNumber ? (partNumberOptions.length > 0 ? "Type or select part number" : "No parts for this work order") : "Select work order first"}
+                  className="min-h-12 sm:min-h-14 text-base font-mono"
+                  disabled={!workOrderNumber || partNumberOptions.length === 0}
+                />
+                {partNumberOpen && partNumberOptions.length > 0 && (
+                  <div className="absolute z-50 w-full mt-1 bg-popover border rounded-md shadow-md max-h-60 overflow-auto">
+                    {partNumberOptions
+                      .map((part, index) => ({ part, index }))
+                      .filter(({ part }) => part.partNumber.toLowerCase().includes(partNumberSearch.toLowerCase()))
+                      .map(({ part, index }) => (
+                        <div
+                          key={`${part.partNumber}-${index}`}
+                          className={cn(
+                            "px-3 py-2 cursor-pointer hover-elevate text-sm font-mono flex items-center",
+                            form.watch("partNumber") === part.partNumber && 
+                            form.watch("rev") === part.rev && 
+                            form.watch("customerName") === part.customerName && "bg-accent"
+                          )}
+                          onMouseDown={(e) => {
+                            e.preventDefault(); // Prevent input blur
+                            handlePartNumberSelect(index);
+                          }}
+                        >
+                          <Check
+                            className={cn(
+                              "mr-2 h-4 w-4",
+                              form.watch("partNumber") === part.partNumber && 
+                              form.watch("rev") === part.rev && 
+                              form.watch("customerName") === part.customerName ? "opacity-100" : "opacity-0"
+                            )}
+                          />
+                          {part.partNumber}
+                        </div>
+                      ))}
+                    {partNumberOptions.filter((part) => part.partNumber.toLowerCase().includes(partNumberSearch.toLowerCase())).length === 0 && (
+                      <div className="px-3 py-2 text-sm text-muted-foreground">
+                        No part number found.
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
               {form.formState.errors.partNumber && (
                 <p className="text-sm text-destructive">{form.formState.errors.partNumber.message}</p>
               )}
