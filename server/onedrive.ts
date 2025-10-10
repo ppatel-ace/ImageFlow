@@ -2,6 +2,11 @@ import { Client } from '@microsoft/microsoft-graph-client';
 
 let connectionSettings: any;
 
+// Replace invalid folder name characters with underscore
+function sanitizeCustomerName(customerName: string): string {
+  return customerName.replace(/[<>:"/\\|?*]/g, '_');
+}
+
 async function getAccessToken() {
   if (connectionSettings && connectionSettings.settings.expires_at && new Date(connectionSettings.settings.expires_at).getTime() > Date.now()) {
     return connectionSettings.settings.access_token;
@@ -55,7 +60,8 @@ export async function uploadFileToOneDrive(
 ) {
   const client = await getOneDriveClient();
   
-  const folderPath = `ACE/${customerName}/${dept}/${workOrderNumber}`;
+  const sanitizedCustomerName = sanitizeCustomerName(customerName);
+  const folderPath = `ACE/${sanitizedCustomerName}/${dept}/${workOrderNumber}`;
   const filePath = `/me/drive/root:/${folderPath}/${fileName}:/content`;
   
   await client

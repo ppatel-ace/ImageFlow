@@ -205,6 +205,9 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
 
     setIsSavingLocal(true);
     try {
+      // Sanitize customer name for folder path (replace invalid characters with underscore)
+      const sanitizedCustomerName = customerName.replace(/[<>:"/\\|?*]/g, '_');
+      
       // Check if the File System Access API is supported
       if ('showDirectoryPicker' in window) {
         // Use File System Access API to create folder structure
@@ -213,8 +216,8 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
         // Create or get ACE folder
         const aceFolderHandle = await directoryHandle.getDirectoryHandle('ACE', { create: true });
         
-        // Create or get customer name folder
-        const customerFolderHandle = await aceFolderHandle.getDirectoryHandle(customerName, { create: true });
+        // Create or get customer name folder (sanitized)
+        const customerFolderHandle = await aceFolderHandle.getDirectoryHandle(sanitizedCustomerName, { create: true });
         
         // Create or get dept folder
         const deptFolderHandle = await customerFolderHandle.getDirectoryHandle(dept, { create: true });
@@ -235,7 +238,7 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
         
         toast({
           title: "Saved Successfully",
-          description: `Image saved to ACE/${customerName}/${dept}/${workOrderNumber}/${filename}`,
+          description: `Image saved to ACE/${sanitizedCustomerName}/${dept}/${workOrderNumber}/${filename}`,
         });
       } else {
         // Fallback: simple download with suggested path in filename
@@ -254,7 +257,7 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
         
         toast({
           title: "Download Started",
-          description: `Please create folders: ACE/${customerName}/${dept}/${workOrderNumber}/ and move the file there.`,
+          description: `Please create folders: ACE/${sanitizedCustomerName}/${dept}/${workOrderNumber}/ and move the file there.`,
         });
       }
     } catch (error) {
