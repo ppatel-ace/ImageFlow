@@ -90,6 +90,11 @@ Preferred communication style: Simple, everyday language.
 - Image preview before upload for quality confirmation
 - Automatic file naming format: {partNumber}Rev{rev}-{timestamp}.{extension} (e.g., ABC123RevA-20250108-151500.jpg)
 - Folder structure: ACE/CustomerName/Dept/WorkOrderNumber
+- Customer name sanitization: Invalid folder characters (< > : " / \ | ? *) replaced with "_" in folder paths
+  - Applied in OneDrive uploads (server/onedrive.ts)
+  - Applied in SharePoint uploads (server/sharepoint.ts)
+  - Applied in local file saves (client/src/components/ImageUploadForm.tsx)
+  - Original customer name preserved in UI and form data
 - Local save option for offline scenarios or backup purposes
 
 **Development Experience**
