@@ -348,27 +348,26 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
               <Label htmlFor="workOrderNumber" className="text-base sm:text-lg font-medium">
                 Work Order # <span className="text-destructive">*</span>
               </Label>
-              <Select
-                value={form.watch("workOrderNumber")}
-                onValueChange={(value) => {
-                  form.setValue("workOrderNumber", value);
+              <Input
+                id="workOrderNumber"
+                data-testid="input-work-order"
+                list="work-orders-list"
+                {...form.register("workOrderNumber")}
+                placeholder="Type or select work order"
+                className="min-h-12 sm:min-h-14 text-base font-mono"
+                onChange={(e) => {
+                  form.setValue("workOrderNumber", e.target.value);
                   // Clear part number when work order changes
                   form.setValue("partNumber", "");
                   form.setValue("rev", "");
                   form.setValue("customerName", "");
                 }}
-              >
-                <SelectTrigger className="min-h-12 sm:min-h-14 text-base font-mono" data-testid="select-work-order">
-                  <SelectValue placeholder="Select work order" />
-                </SelectTrigger>
-                <SelectContent>
-                  {workOrders.map((wo) => (
-                    <SelectItem key={wo} value={wo}>
-                      {wo}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              />
+              <datalist id="work-orders-list">
+                {workOrders.map((wo) => (
+                  <option key={wo} value={wo} />
+                ))}
+              </datalist>
               {form.formState.errors.workOrderNumber && (
                 <p className="text-sm text-destructive">{form.formState.errors.workOrderNumber.message}</p>
               )}
