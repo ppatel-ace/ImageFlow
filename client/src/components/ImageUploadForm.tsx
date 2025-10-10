@@ -334,6 +334,18 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
   const customerName = form.watch("customerName");
   const partNumber = form.watch("partNumber");
 
+  // Check if work order matches the list (normalize trailing zeros for comparison)
+  const normalizeWorkOrder = (wo: string) => {
+    if (wo.length > 0 && /[1-9]/.test(wo)) {
+      return wo.replace(/0+$/, '');
+    }
+    return wo;
+  };
+  
+  const workOrderMatches = workOrderNumber && workOrders.some(wo => 
+    normalizeWorkOrder(wo) === normalizeWorkOrder(workOrderNumber)
+  );
+
   return (
     <div className="w-full max-w-3xl mx-auto px-3 sm:px-4 md:px-6 space-y-4 sm:space-y-6">
       <div className="text-center space-y-1 sm:space-y-2">
@@ -382,13 +394,6 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
                   }}
                   onFocus={() => setWorkOrderOpen(true)}
                   onBlur={() => {
-                    // Remove trailing zeros when user finishes typing
-                    let value = workOrderSearch;
-                    if (value.length > 0 && /[1-9]/.test(value)) {
-                      value = value.replace(/0+$/, '');
-                      setWorkOrderSearch(value);
-                      form.setValue("workOrderNumber", value);
-                    }
                     // Close dropdown after a small delay to allow clicking items
                     setTimeout(() => setWorkOrderOpen(false), 200);
                   }}
@@ -611,7 +616,7 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
             size="lg"
             className="w-full sm:flex-1 min-h-12 sm:min-h-14"
             onClick={handleSaveLocally}
-            disabled={isUploading || isSavingLocal || isUploadingSharePoint || !selectedFile}
+            disabled={isUploading || isSavingLocal || isUploadingSharePoint || !selectedFile || !workOrderMatches}
             data-testid="button-save-local"
           >
             {isSavingLocal ? (
@@ -633,7 +638,7 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
             type="submit"
             size="lg"
             className="w-full sm:flex-1 min-h-12 sm:min-h-14"
-            disabled={isUploading || isSavingLocal || isUploadingSharePoint || !selectedFile}
+            disabled={isUploading || isSavingLocal || isUploadingSharePoint || !selectedFile || !workOrderMatches}
             data-testid="button-upload"
           >
             {isUploading ? (
@@ -658,7 +663,7 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
             size="lg"
             className="w-full sm:flex-1 min-h-12 sm:min-h-14"
             onClick={handleSharePointUpload}
-            disabled={isUploading || isSavingLocal || isUploadingSharePoint || !selectedFile}
+            disabled={isUploading || isSavingLocal || isUploadingSharePoint || !selectedFile || !workOrderMatches}
             data-testid="button-upload-sharepoint"
           >
             {isUploadingSharePoint ? (
