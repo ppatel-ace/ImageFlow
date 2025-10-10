@@ -7,10 +7,13 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Camera, Upload, FolderOpen, CheckCircle2, Loader2, Image as ImageIcon, Download } from "lucide-react";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Command, CommandEmpty, CommandGroup, CommandItem, CommandList } from "@/components/ui/command";
+import { Camera, Upload, FolderOpen, CheckCircle2, Loader2, Image as ImageIcon, Download, Check } from "lucide-react";
 import { format } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
 import { useQuery } from "@tanstack/react-query";
+import { cn } from "@/lib/utils";
 
 const uploadFormSchema = z.object({
   dept: z.string().min(1, "Dept is required"),
@@ -36,6 +39,8 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
   const [isUploadingSharePoint, setIsUploadingSharePoint] = useState(false);
   const [sharePointSuccess, setSharePointSuccess] = useState(false);
   const [partNumberOptions, setPartNumberOptions] = useState<{ partNumber: string; rev: string; customerName: string }[]>([]);
+  const [workOrderOpen, setWorkOrderOpen] = useState(false);
+  const [workOrderSearch, setWorkOrderSearch] = useState("");
   const { toast } = useToast();
 
   // Fetch all work orders
@@ -66,8 +71,19 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
   const rev = form.watch("rev");
   const workOrderNumber = form.watch("workOrderNumber");
 
-  // Fetch part numbers when work order is selected
+  // Track previous work order to detect changes
+  const [prevWorkOrder, setPrevWorkOrder] = useState(workOrderNumber);
+
+  // Fetch part numbers and clear dependent fields when work order changes
   useEffect(() => {
+    // Clear dependent fields when work order changes
+    if (workOrderNumber !== prevWorkOrder) {
+      form.setValue("partNumber", "");
+      form.setValue("rev", "");
+      form.setValue("customerName", "");
+      setPrevWorkOrder(workOrderNumber);
+    }
+
     const fetchPartNumbers = async () => {
       if (workOrderNumber) {
         try {
@@ -88,7 +104,7 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
     };
 
     fetchPartNumbers();
-  }, [workOrderNumber]);
+  }, [workOrderNumber, prevWorkOrder, form]);
 
   // Auto-populate rev and customer name when part number is selected
   const handlePartNumberSelect = (selectedPartNumber: string) => {
@@ -115,6 +131,11 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
       localStorage.setItem("lastRev", rev);
     }
   }, [rev]);
+
+  // Sync workOrderSearch with form value
+  useEffect(() => {
+    setWorkOrderSearch(workOrderNumber);
+  }, [workOrderNumber]);
 
   const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -348,26 +369,56 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
               <Label htmlFor="workOrderNumber" className="text-base sm:text-lg font-medium">
                 Work Order # <span className="text-destructive">*</span>
               </Label>
-              <Input
-                id="workOrderNumber"
-                data-testid="input-work-order"
-                list="work-orders-list"
-                {...form.register("workOrderNumber")}
-                placeholder="Type or select work order"
-                className="min-h-12 sm:min-h-14 text-base font-mono"
-                onChange={(e) => {
-                  form.setValue("workOrderNumber", e.target.value);
-                  // Clear part number when work order changes
-                  form.setValue("partNumber", "");
-                  form.setValue("rev", "");
-                  form.setValue("customerName", "");
-                }}
-              />
-              <datalist id="work-orders-list">
-                {workOrders.map((wo) => (
-                  <option key={wo} value={wo} />
-                ))}
-              </datalist>
+              <Popover open={workOrderOpen} onOpenChange={setWorkOrderOpen}>
+                <PopoverTrigger asChild>
+                  <div className="relative">
+                    <Input
+                      id="workOrderNumber"
+                      data-testid="input-work-order"
+                      value={workOrderSearch}
+                      onChange={(e) => {
+                        const value = e.target.value;
+                        setWorkOrderSearch(value);
+                        form.setValue("workOrderNumber", value);
+                        setWorkOrderOpen(true);
+                      }}
+                      onFocus={() => setWorkOrderOpen(true)}
+                      placeholder="Type or select work order"
+                      className="min-h-12 sm:min-h-14 text-base font-mono"
+                    />
+                  </div>
+                </PopoverTrigger>
+                <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
+                  <Command>
+                    <CommandList>
+                      <CommandEmpty>No work order found.</CommandEmpty>
+                      <CommandGroup>
+                        {workOrders
+                          .filter((wo) => wo.toLowerCase().includes(workOrderSearch.toLowerCase()))
+                          .map((wo) => (
+                            <CommandItem
+                              key={wo}
+                              value={wo}
+                              onSelect={(value) => {
+                                setWorkOrderSearch(value);
+                                form.setValue("workOrderNumber", value);
+                                setWorkOrderOpen(false);
+                              }}
+                            >
+                              <Check
+                                className={cn(
+                                  "mr-2 h-4 w-4",
+                                  form.watch("workOrderNumber") === wo ? "opacity-100" : "opacity-0"
+                                )}
+                              />
+                              {wo}
+                            </CommandItem>
+                          ))}
+                      </CommandGroup>
+                    </CommandList>
+                  </Command>
+                </PopoverContent>
+              </Popover>
               {form.formState.errors.workOrderNumber && (
                 <p className="text-sm text-destructive">{form.formState.errors.workOrderNumber.message}</p>
               )}

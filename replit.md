@@ -31,7 +31,12 @@ Preferred communication style: Simple, everyday language.
 - Zod schema validation integrated via @hookform/resolvers
 - Local storage persistence for form data (part numbers, customer names, work orders, dept, and rev values)
 - Real-time localStorage sync: Dept and Rev fields save automatically on change (not just on submit)
-- Customer Name dropdown with history: Shows last 10 customer names with always-visible delete buttons (touch-friendly)
+- Work Order autocomplete: Supports both manual typing AND dropdown selection from Excel-loaded work orders
+  - Popover + Command component for instant dropdown on focus/typing
+  - Real-time filtering as user types
+  - Accepts custom work orders not in the Excel file
+  - Automatically clears Part #, Rev, and Customer Name when work order changes
+- Rev and Customer Name fields: Read-only, auto-filled from Excel data based on selected Part #
 
 **State Management Pattern**
 - React Context for theme management (light/dark mode)
