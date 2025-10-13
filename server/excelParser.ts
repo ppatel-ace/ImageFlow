@@ -26,20 +26,20 @@ export function parseExcelFile(filePath: string): WorkOrderData[] {
   
   // Skip header row and parse data
   // Based on actual Excel structure:
-  // Index 3 = SalesOrderNo (Work Order #)
-  // Index 7 = BillToName (Customer Name)
-  // Index 10 = ItemCode (Part #)
-  // Index 19 = Rev# (Rev)
+  // Index 4 = SalesOrderNo (Work Order #)
+  // Index 6 = BillToName (Customer Name)
+  // Index 9 = ItemCode (Part #)
+  // Index 14 = UDF_REV (Rev)
   const workOrderData: WorkOrderData[] = [];
   
   for (let i = 1; i < data.length; i++) {
     const row = data[i];
     if (!row || row.length === 0) continue;
     
-    const workOrder = row[3]?.toString().trim(); // SalesOrderNo
-    const customerName = row[7]?.toString().trim(); // BillToName
-    const rev = row[19]?.toString().trim() || ''; // Rev#
-    const partNumber = row[10]?.toString().trim(); // ItemCode
+    const workOrder = row[4]?.toString().trim(); // SalesOrderNo
+    const customerName = row[6]?.toString().trim(); // BillToName
+    const rev = row[14]?.toString().trim() || ''; // UDF_REV
+    const partNumber = row[9]?.toString().trim(); // ItemCode
     
     // Only add rows that have at least work order and part number
     if (workOrder && partNumber) {
@@ -61,7 +61,7 @@ export function getWorkOrderData(): WorkOrderData[] {
   }
   
   try {
-    const excelPath = join(__dirname, '..', 'attached_assets', 'OpenOrdersEst Parth_1760046981567.xlsx');
+    const excelPath = join(__dirname, '..', 'attached_assets', 'OpenOrdersAllQtyOnly_1760375874902.xlsx');
     cachedData = parseExcelFile(excelPath);
     return cachedData;
   } catch (error) {
