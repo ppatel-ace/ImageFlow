@@ -100,7 +100,12 @@ Preferred communication style: Simple, everyday language.
 **Excel Data Updates via Gmail**
 - Automatic Excel file updates from emails sent to aceelectronics385@gmail.com
 - Scanner sends updated work order files from scanner@aceelectronics.com
-- "Check for Updates" button in UI to manually trigger email check
+- **Automatic Updates**:
+  - Auto-check on page load (once per day)
+  - Scheduled check at 10:15 AM EST daily
+  - Uses localStorage to track last check date
+  - Silent auto-checks (no toast notifications if no updates found)
+- "Check for Updates" button in UI for manual checks
 - System searches for latest email with Excel attachment (.xlsx or .xls)
 - Downloads and saves Excel file with timestamp to attached_assets folder
 - Automatically reloads work order data from new file

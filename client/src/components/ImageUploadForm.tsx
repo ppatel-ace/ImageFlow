@@ -49,6 +49,7 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
   const [partNumberOpen, setPartNumberOpen] = useState(false);
   const [partNumberSearch, setPartNumberSearch] = useState("");
   const [isCheckingGmail, setIsCheckingGmail] = useState(false);
+  const [lastAutoCheck, setLastAutoCheck] = useState<string | null>(null);
   const { toast } = useToast();
 
   // Fetch all work orders
@@ -356,8 +357,25 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
     }
   };
 
-  const handleCheckGmail = async () => {
+  const handleCheckGmail = async (isAutoCheck: boolean = false, checkType: 'pageLoad' | 'scheduled' | 'manual' = 'manual') => {
     setIsCheckingGmail(true);
+    
+    // Record the auto-check attempt BEFORE making the request
+    if (isAutoCheck) {
+      const now = new Date().toISOString();
+      
+      // Track page load and scheduled checks separately
+      if (checkType === 'pageLoad') {
+        localStorage.setItem("lastPageLoadCheck", now);
+      } else if (checkType === 'scheduled') {
+        localStorage.setItem("lastScheduledCheck", now);
+      }
+      
+      // Also update the general last auto-check for UI display
+      localStorage.setItem("lastAutoCheckDate", now);
+      setLastAutoCheck(now);
+    }
+    
     try {
       const response = await fetch("/api/check-gmail", {
         method: "POST",
@@ -367,29 +385,127 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
 
       if (result.success) {
         toast({
-          title: "Excel Data Updated!",
+          title: isAutoCheck ? "Auto-Update Successful!" : "Excel Data Updated!",
           description: `Updated from email received ${result.emailDate ? new Date(result.emailDate).toLocaleString() : 'recently'}. File: ${result.fileName}`,
         });
         
         // Reload the page to refresh work orders
         window.location.reload();
       } else {
-        toast({
-          title: "No Updates Found",
-          description: result.message || "No new Excel files found in Gmail from scanner@aceelectronics.com",
-        });
+        // Only show toast for manual checks, silent for auto-checks with no updates
+        if (!isAutoCheck) {
+          toast({
+            title: "No Updates Found",
+            description: result.message || "No new Excel files found in Gmail from scanner@aceelectronics.com",
+          });
+        }
       }
     } catch (error: any) {
       console.error("Gmail check error:", error);
-      toast({
-        title: "Check Failed",
-        description: error.message || "Failed to check Gmail for updates",
-        variant: "destructive",
-      });
+      // Only show error toast for manual checks
+      if (!isAutoCheck) {
+        toast({
+          title: "Check Failed",
+          description: error.message || "Failed to check Gmail for updates",
+          variant: "destructive",
+        });
+      }
     } finally {
       setIsCheckingGmail(false);
     }
   };
+
+  // Load last auto-check date on mount
+  useEffect(() => {
+    const lastCheck = localStorage.getItem("lastAutoCheckDate");
+    if (lastCheck) {
+      setLastAutoCheck(lastCheck);
+    }
+  }, []);
+
+  // Auto-check on page load (runs once when component mounts)
+  useEffect(() => {
+    const performAutoCheck = async () => {
+      const lastPageLoadCheckDate = localStorage.getItem("lastPageLoadCheck");
+      
+      // Check if we already did a page load check today
+      if (lastPageLoadCheckDate) {
+        const lastCheck = new Date(lastPageLoadCheckDate);
+        const now = new Date();
+        
+        // Compare dates (same day check)
+        if (lastCheck.toDateString() === now.toDateString()) {
+          return; // Already did page load check today, skip
+        }
+      }
+      
+      // Wait 2 seconds after page load to check
+      setTimeout(() => {
+        handleCheckGmail(true, 'pageLoad');
+      }, 2000);
+    };
+
+    performAutoCheck();
+  }, []); // Empty dependency array = runs once on mount
+
+  // Scheduled check at 10:15 AM EST/EDT daily
+  useEffect(() => {
+    const getEasternDateString = (date: Date): string => {
+      const formatter = new Intl.DateTimeFormat("en-US", {
+        timeZone: "America/New_York",
+        year: "numeric",
+        month: "numeric",
+        day: "numeric",
+      });
+      const parts = formatter.formatToParts(date);
+      const year = parts.find(p => p.type === "year")?.value;
+      const month = parts.find(p => p.type === "month")?.value;
+      const day = parts.find(p => p.type === "day")?.value;
+      return `${year}-${month}-${day}`;
+    };
+
+    const checkScheduledTime = () => {
+      const now = new Date();
+      
+      // Get current time in America/New_York timezone using Intl.DateTimeFormat
+      const timeFormatter = new Intl.DateTimeFormat("en-US", {
+        timeZone: "America/New_York",
+        hour: "numeric",
+        minute: "numeric",
+        hour12: false,
+      });
+      
+      const timeParts = timeFormatter.formatToParts(now);
+      const hours = parseInt(timeParts.find(p => p.type === "hour")?.value || "0");
+      const minutes = parseInt(timeParts.find(p => p.type === "minute")?.value || "0");
+      
+      // Check if it's 10:15 AM EST/EDT
+      if (hours === 10 && minutes === 15) {
+        const lastScheduledCheckDate = localStorage.getItem("lastScheduledCheck");
+        
+        // Only check if we haven't done the scheduled check today (in Eastern timezone)
+        if (lastScheduledCheckDate) {
+          const lastCheck = new Date(lastScheduledCheckDate);
+          const lastCheckEasternDate = getEasternDateString(lastCheck);
+          const todayEasternDate = getEasternDateString(now);
+          
+          if (lastCheckEasternDate === todayEasternDate) {
+            return; // Already did scheduled check today in Eastern timezone, skip
+          }
+        }
+        
+        handleCheckGmail(true, 'scheduled');
+      }
+    };
+
+    // Check every minute for the scheduled time
+    const interval = setInterval(checkScheduledTime, 60000);
+
+    // Also check immediately when component mounts
+    checkScheduledTime();
+
+    return () => clearInterval(interval);
+  }, []);
 
   const customerName = form.watch("customerName");
   const partNumber = form.watch("partNumber");
@@ -413,13 +529,13 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
           <h1 className="text-2xl sm:text-3xl md:text-4xl font-semibold text-foreground">Ace Image Organizer</h1>
           <p className="text-muted-foreground text-base sm:text-lg">Capture and organize images</p>
         </div>
-        <div className="flex justify-center">
+        <div className="flex flex-col items-center gap-2">
           <Button
             type="button"
             variant="outline"
             size="lg"
             className="min-h-12 sm:min-h-14"
-            onClick={handleCheckGmail}
+            onClick={() => handleCheckGmail(false)}
             disabled={isCheckingGmail}
             data-testid="button-check-gmail"
           >
@@ -435,6 +551,14 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
               </>
             )}
           </Button>
+          <div className="text-xs text-muted-foreground text-center">
+            <p>Auto-updates: Daily at 10:15 AM EST & on page load</p>
+            {lastAutoCheck && (
+              <p className="text-xs">
+                Last auto-check: {new Date(lastAutoCheck).toLocaleString()}
+              </p>
+            )}
+          </div>
         </div>
       </div>
 
