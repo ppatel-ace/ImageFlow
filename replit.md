@@ -101,11 +101,15 @@ Preferred communication style: Simple, everyday language.
 - Automatic Excel file updates from emails sent to aceelectronics385@gmail.com
 - Scanner sends updated work order files from scanner@aceelectronics.com
 - **Automatic Updates**:
-  - Auto-check on page load (once per day)
-  - Scheduled check at 10:15 AM EST daily
-  - Uses localStorage to track last check date
+  - Auto-check on page load (once per day, tracked separately via lastPageLoadCheck)
+  - Scheduled check at 10:15 AM EST/EDT daily (tracked separately via lastScheduledCheck)
+  - Both checks can run on the same day without interfering with each other
+  - Uses Intl.DateTimeFormat with America/New_York timezone for accurate EST/EDT handling
+  - Scheduled check fires at exactly 10:15 AM Eastern time regardless of user's local timezone
+  - Date comparisons for scheduled checks use Eastern timezone to prevent skipped runs
   - Silent auto-checks (no toast notifications if no updates found)
-- "Check for Updates" button in UI for manual checks
+  - lastAutoCheckDate tracks most recent auto-check for UI display
+- "Check for Updates" button in UI for manual checks (shows toast notifications)
 - System searches for latest email with Excel attachment (.xlsx or .xls)
 - Downloads and saves Excel file with timestamp to attached_assets folder
 - Automatically reloads work order data from new file
