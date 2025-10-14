@@ -97,6 +97,17 @@ Preferred communication style: Simple, everyday language.
   - Original values preserved in UI and form data for display
 - Local save option for offline scenarios or backup purposes
 
+**Excel Data Updates via Gmail**
+- Automatic Excel file updates from emails sent to aceelectronics385@gmail.com
+- Scanner sends updated work order files from scanner@aceelectronics.com
+- "Check for Updates" button in UI to manually trigger email check
+- System searches for latest email with Excel attachment (.xlsx or .xls)
+- Downloads and saves Excel file with timestamp to attached_assets folder
+- Automatically reloads work order data from new file
+- Gmail OAuth integration via Replit connector for secure authentication
+- Base64url to base64 conversion for proper Excel file decoding
+- Search query ensures only scanner emails with attachments are processed
+
 **Development Experience**
 - TypeScript strict mode for type safety across the codebase
 - ESM modules throughout (type: "module" in package.json)
