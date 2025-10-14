@@ -25,7 +25,7 @@ const uploadFormSchema = z.object({
   partNumber: z.string().min(1, "Part # is required"),
   rev: z.string().min(1, "Rev. is required"),
   customerName: z.string().min(1, "Customer name is required"),
-  workOrderNumber: z.string().min(1, "Work Order # is required"),
+  salesOrderNumber: z.string().min(1, "Sales Order # is required"),
   imageFile: z.any().refine((file) => file instanceof File, "Image file is required"),
 });
 
@@ -44,16 +44,16 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
   const [isUploadingGdrive, setIsUploadingGdrive] = useState(false);
   const [gdriveSuccess, setGdriveSuccess] = useState(false);
   const [partNumberOptions, setPartNumberOptions] = useState<{ partNumber: string; rev: string; customerName: string }[]>([]);
-  const [workOrderOpen, setWorkOrderOpen] = useState(false);
-  const [workOrderSearch, setWorkOrderSearch] = useState("");
+  const [salesOrderOpen, setSalesOrderOpen] = useState(false);
+  const [salesOrderSearch, setSalesOrderSearch] = useState("");
   const [partNumberOpen, setPartNumberOpen] = useState(false);
   const [partNumberSearch, setPartNumberSearch] = useState("");
   const [isCheckingGmail, setIsCheckingGmail] = useState(false);
   const { toast } = useToast();
 
-  // Fetch all work orders
-  const { data: workOrders = [] } = useQuery<string[]>({
-    queryKey: ['/api/work-orders'],
+  // Fetch all sales orders
+  const { data: salesOrders = [] } = useQuery<string[]>({
+    queryKey: ['/api/sales-orders'],
     staleTime: Infinity,
   });
 
@@ -61,7 +61,7 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
   const lastPartNumber = localStorage.getItem("lastPartNumber") || "";
   const lastRev = localStorage.getItem("lastRev") || "";
   const lastCustomerName = localStorage.getItem("lastCustomerName") || "";
-  const lastWorkOrderNumber = localStorage.getItem("lastWorkOrderNumber") || "";
+  const lastSalesOrderNumber = localStorage.getItem("lastSalesOrderNumber") || "";
 
   const form = useForm<UploadFormData>({
     resolver: zodResolver(uploadFormSchema),
@@ -70,32 +70,32 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
       partNumber: lastPartNumber,
       rev: lastRev,
       customerName: lastCustomerName,
-      workOrderNumber: lastWorkOrderNumber,
+      salesOrderNumber: lastSalesOrderNumber,
     },
   });
 
   // Watch dept and rev fields and save to localStorage when they change
   const dept = form.watch("dept");
   const rev = form.watch("rev");
-  const workOrderNumber = form.watch("workOrderNumber");
+  const salesOrderNumber = form.watch("salesOrderNumber");
 
-  // Track previous work order to detect changes
-  const [prevWorkOrder, setPrevWorkOrder] = useState(workOrderNumber);
+  // Track previous sales order to detect changes
+  const [prevSalesOrder, setPrevSalesOrder] = useState(salesOrderNumber);
 
-  // Fetch part numbers and clear dependent fields when work order changes
+  // Fetch part numbers and clear dependent fields when sales order changes
   useEffect(() => {
-    // Clear dependent fields when work order changes
-    if (workOrderNumber !== prevWorkOrder) {
+    // Clear dependent fields when sales order changes
+    if (salesOrderNumber !== prevSalesOrder) {
       form.setValue("partNumber", "");
       form.setValue("rev", "");
       form.setValue("customerName", "");
-      setPrevWorkOrder(workOrderNumber);
+      setPrevSalesOrder(salesOrderNumber);
     }
 
     const fetchPartNumbers = async () => {
-      if (workOrderNumber) {
+      if (salesOrderNumber) {
         try {
-          const response = await fetch(`/api/part-numbers/${encodeURIComponent(workOrderNumber)}`);
+          const response = await fetch(`/api/part-numbers/${encodeURIComponent(salesOrderNumber)}`);
           if (response.ok) {
             const data = await response.json();
             setPartNumberOptions(data);
@@ -112,7 +112,7 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
     };
 
     fetchPartNumbers();
-  }, [workOrderNumber, prevWorkOrder, form]);
+  }, [salesOrderNumber, prevSalesOrder, form]);
 
   // Auto-populate rev and customer name when part number is selected
   const handlePartNumberSelect = (index: number) => {
@@ -142,10 +142,10 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
     }
   }, [rev]);
 
-  // Sync workOrderSearch with form value
+  // Sync salesOrderSearch with form value
   useEffect(() => {
-    setWorkOrderSearch(workOrderNumber);
-  }, [workOrderNumber]);
+    setSalesOrderSearch(salesOrderNumber);
+  }, [salesOrderNumber]);
 
   // Sync partNumberSearch with form value
   useEffect(() => {
@@ -174,7 +174,7 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
       localStorage.setItem("lastPartNumber", data.partNumber);
       localStorage.setItem("lastRev", data.rev);
       localStorage.setItem("lastCustomerName", data.customerName);
-      localStorage.setItem("lastWorkOrderNumber", data.workOrderNumber);
+      localStorage.setItem("lastWorkOrderNumber", data.salesOrderNumber);
       
       const timestamp = format(new Date(), "yyyyMMdd-HHmmss");
       const sanitizedPartNumber = sanitizePath(data.partNumber);
@@ -189,7 +189,7 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
           partNumber: data.partNumber,
           rev: data.rev,
           customerName: data.customerName,
-          workOrderNumber: data.workOrderNumber,
+          salesOrderNumber: data.salesOrderNumber,
         });
         setImagePreview(null);
         setSelectedFile(null);
@@ -202,7 +202,7 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
   };
 
   const handleSaveLocally = async () => {
-    if (!selectedFile || !dept || !customerName || !workOrderNumber || !partNumber) {
+    if (!selectedFile || !dept || !customerName || !salesOrderNumber || !partNumber) {
       toast({
         title: "Missing Information",
         description: "Please fill in all fields and select an image before saving.",
@@ -233,7 +233,7 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
         const deptFolderHandle = await customerFolderHandle.getDirectoryHandle(dept, { create: true });
         
         // Create or get work order folder inside dept folder
-        const workOrderFolderHandle = await deptFolderHandle.getDirectoryHandle(workOrderNumber, { create: true });
+        const workOrderFolderHandle = await deptFolderHandle.getDirectoryHandle(salesOrderNumber, { create: true });
         
         // Generate filename with timestamp
         const timestamp = format(new Date(), "yyyyMMdd-HHmmss");
@@ -248,7 +248,7 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
         
         toast({
           title: "Saved Successfully",
-          description: `Image saved to ACE/${sanitizedCustomerName}/${dept}/${workOrderNumber}/${filename}`,
+          description: `Image saved to ACE/${sanitizedCustomerName}/${dept}/${salesOrderNumber}/${filename}`,
         });
       } else {
         // Fallback: simple download with suggested path in filename
@@ -267,7 +267,7 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
         
         toast({
           title: "Download Started",
-          description: `Please create folders: ACE/${sanitizedCustomerName}/${dept}/${workOrderNumber}/ and move the file there.`,
+          description: `Please create folders: ACE/${sanitizedCustomerName}/${dept}/${salesOrderNumber}/ and move the file there.`,
         });
       }
     } catch (error) {
@@ -291,7 +291,7 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
   };
 
   const handleGdriveUpload = async () => {
-    if (!selectedFile || !dept || !customerName || !workOrderNumber || !partNumber) {
+    if (!selectedFile || !dept || !customerName || !salesOrderNumber || !partNumber) {
       toast({
         title: "Missing Information",
         description: "Please fill in all fields and select an image before uploading.",
@@ -311,7 +311,7 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
       formData.append("imageFile", selectedFile);
       formData.append("customerName", customerName);
       formData.append("dept", dept);
-      formData.append("workOrderNumber", workOrderNumber);
+      formData.append("salesOrderNumber", salesOrderNumber);
       formData.append("imageName", imageName);
 
       const response = await fetch("/api/upload/gdrive", {
@@ -402,8 +402,8 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
     return wo;
   };
   
-  const workOrderMatches = workOrderNumber && workOrders.some(wo => 
-    normalizeWorkOrder(wo) === normalizeWorkOrder(workOrderNumber)
+  const workOrderMatches = salesOrderNumber && workOrders.some(wo => 
+    normalizeWorkOrder(wo) === normalizeWorkOrder(salesOrderNumber)
   );
 
   return (
@@ -463,18 +463,18 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="workOrderNumber" className="text-base sm:text-lg font-medium">
+              <Label htmlFor="salesOrderNumber" className="text-base sm:text-lg font-medium">
                 Work Order # <span className="text-destructive">*</span>
               </Label>
               <div className="relative">
                 <Input
-                  id="workOrderNumber"
+                  id="salesOrderNumber"
                   data-testid="input-work-order"
                   value={workOrderSearch}
                   onChange={(e) => {
                     const value = e.target.value;
                     setWorkOrderSearch(value);
-                    form.setValue("workOrderNumber", value);
+                    form.setValue("salesOrderNumber", value);
                     setWorkOrderOpen(true);
                   }}
                   onFocus={() => setWorkOrderOpen(true)}
@@ -494,19 +494,19 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
                           key={wo}
                           className={cn(
                             "px-3 py-2 cursor-pointer hover-elevate text-sm font-mono flex items-center",
-                            form.watch("workOrderNumber") === wo && "bg-accent"
+                            form.watch("salesOrderNumber") === wo && "bg-accent"
                           )}
                           onMouseDown={(e) => {
                             e.preventDefault(); // Prevent input blur
                             setWorkOrderSearch(wo);
-                            form.setValue("workOrderNumber", wo);
+                            form.setValue("salesOrderNumber", wo);
                             setWorkOrderOpen(false);
                           }}
                         >
                           <Check
                             className={cn(
                               "mr-2 h-4 w-4",
-                              form.watch("workOrderNumber") === wo ? "opacity-100" : "opacity-0"
+                              form.watch("salesOrderNumber") === wo ? "opacity-100" : "opacity-0"
                             )}
                           />
                           {wo}
@@ -520,8 +520,8 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
                   </div>
                 )}
               </div>
-              {form.formState.errors.workOrderNumber && (
-                <p className="text-sm text-destructive">{form.formState.errors.workOrderNumber.message}</p>
+              {form.formState.errors.salesOrderNumber && (
+                <p className="text-sm text-destructive">{form.formState.errors.salesOrderNumber.message}</p>
               )}
             </div>
 
@@ -545,9 +545,9 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
                     // Close dropdown after a small delay to allow clicking items
                     setTimeout(() => setPartNumberOpen(false), 200);
                   }}
-                  placeholder={workOrderNumber ? (partNumberOptions.length > 0 ? "Type or select part number" : "No parts for this work order") : "Select work order first"}
+                  placeholder={salesOrderNumber ? (partNumberOptions.length > 0 ? "Type or select part number" : "No parts for this work order") : "Select work order first"}
                   className="min-h-12 sm:min-h-14 text-base font-mono"
-                  disabled={!workOrderNumber || partNumberOptions.length === 0}
+                  disabled={!salesOrderNumber || partNumberOptions.length === 0}
                 />
                 {partNumberOpen && partNumberOptions.length > 0 && (
                   <div className="absolute z-50 w-full mt-1 bg-popover border rounded-md shadow-md max-h-60 overflow-auto">
@@ -703,14 +703,14 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
           </Card>
         )}
 
-        {(customerName || dept || workOrderNumber) && (
+        {(customerName || dept || salesOrderNumber) && (
           <Card className="p-4 sm:p-6 bg-accent/50">
             <div className="flex items-start gap-2 sm:gap-3">
               <FolderOpen className="w-4 h-4 sm:w-5 sm:h-5 text-primary mt-0.5 shrink-0" />
               <div className="flex-1 min-w-0">
                 <h3 className="text-xs sm:text-sm font-medium text-muted-foreground mb-1">Folder Path</h3>
                 <p className="font-mono text-sm sm:text-base text-foreground break-all" data-testid="text-folder-path">
-                  ACE / {customerName || "[Customer Name]"} / {dept || "[Dept]"} / {workOrderNumber || "[Work Order #]"}
+                  ACE / {customerName || "[Customer Name]"} / {dept || "[Dept]"} / {salesOrderNumber || "[Work Order #]"}
                 </p>
               </div>
             </div>
@@ -729,7 +729,7 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
                 partNumber: "",
                 rev: "",
                 customerName: "",
-                workOrderNumber: "",
+                salesOrderNumber: "",
               });
               setImagePreview(null);
               setSelectedFile(null);
