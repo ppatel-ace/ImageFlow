@@ -41,8 +41,8 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
   const [uploadSuccess, setUploadSuccess] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [isSavingLocal, setIsSavingLocal] = useState(false);
-  const [isUploadingSharePoint, setIsUploadingSharePoint] = useState(false);
-  const [sharePointSuccess, setSharePointSuccess] = useState(false);
+  const [isUploadingGdrive, setIsUploadingGdrive] = useState(false);
+  const [gdriveSuccess, setGdriveSuccess] = useState(false);
   const [partNumberOptions, setPartNumberOptions] = useState<{ partNumber: string; rev: string; customerName: string }[]>([]);
   const [workOrderOpen, setWorkOrderOpen] = useState(false);
   const [workOrderSearch, setWorkOrderSearch] = useState("");
@@ -290,7 +290,7 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
     }
   };
 
-  const handleSharePointUpload = async () => {
+  const handleGdriveUpload = async () => {
     if (!selectedFile || !dept || !customerName || !workOrderNumber || !partNumber) {
       toast({
         title: "Missing Information",
@@ -300,7 +300,7 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
       return;
     }
 
-    setIsUploadingSharePoint(true);
+    setIsUploadingGdrive(true);
     try {
       const timestamp = format(new Date(), "yyyyMMdd-HHmmss");
       const sanitizedPartNumber = sanitizePath(partNumber);
@@ -314,7 +314,7 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
       formData.append("workOrderNumber", workOrderNumber);
       formData.append("imageName", imageName);
 
-      const response = await fetch("/api/upload/sharepoint", {
+      const response = await fetch("/api/upload/gdrive", {
         method: "POST",
         body: formData,
       });
@@ -324,8 +324,8 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
       if (!response.ok) {
         if (result.requiresAuth) {
           toast({
-            title: "SharePoint Not Connected",
-            description: "Please connect your SharePoint account in the Integrations panel to upload files.",
+            title: "Google Drive Not Connected",
+            description: "Please connect your Google Drive account in the Integrations panel to upload files.",
             variant: "destructive",
           });
           throw new Error(result.message);
@@ -335,24 +335,24 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
 
       toast({
         title: "Upload Successful",
-        description: `Image saved to SharePoint: ${result.path}`,
+        description: `Image saved to Google Drive: ${result.path}`,
       });
 
-      setSharePointSuccess(true);
+      setGdriveSuccess(true);
       setTimeout(() => {
-        setSharePointSuccess(false);
+        setGdriveSuccess(false);
       }, 2000);
     } catch (error: any) {
-      console.error("SharePoint upload error:", error);
+      console.error("Google Drive upload error:", error);
       if (!error.message.includes('not connected')) {
         toast({
           title: "Upload Failed",
-          description: error.message || "An error occurred while uploading to SharePoint.",
+          description: error.message || "An error occurred while uploading to Google Drive.",
           variant: "destructive",
         });
       }
     } finally {
-      setIsUploadingSharePoint(false);
+      setIsUploadingGdrive(false);
     }
   };
 
@@ -734,7 +734,7 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
               setImagePreview(null);
               setSelectedFile(null);
             }}
-            disabled={isUploading || isSavingLocal || isUploadingSharePoint}
+            disabled={isUploading || isSavingLocal || isUploadingGdrive}
             data-testid="button-clear"
           >
             Clear Form
@@ -745,7 +745,7 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
             size="lg"
             className="w-full sm:flex-1 min-h-12 sm:min-h-14"
             onClick={handleSaveLocally}
-            disabled={isUploading || isSavingLocal || isUploadingSharePoint || !selectedFile || !workOrderMatches}
+            disabled={isUploading || isSavingLocal || isUploadingGdrive || !selectedFile || !workOrderMatches}
             data-testid="button-save-local"
           >
             {isSavingLocal ? (
@@ -767,7 +767,7 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
             type="submit"
             size="lg"
             className="w-full sm:flex-1 min-h-12 sm:min-h-14"
-            disabled={isUploading || isSavingLocal || isUploadingSharePoint || !selectedFile || !workOrderMatches}
+            disabled={isUploading || isSavingLocal || isUploadingGdrive || !selectedFile || !workOrderMatches}
             data-testid="button-upload"
           >
             {isUploading ? (
@@ -791,16 +791,16 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
             type="button"
             size="lg"
             className="w-full sm:flex-1 min-h-12 sm:min-h-14"
-            onClick={handleSharePointUpload}
-            disabled={isUploading || isSavingLocal || isUploadingSharePoint || !selectedFile || !workOrderMatches}
-            data-testid="button-upload-sharepoint"
+            onClick={handleGdriveUpload}
+            disabled={isUploading || isSavingLocal || isUploadingGdrive || !selectedFile || !workOrderMatches}
+            data-testid="button-upload-gdrive"
           >
-            {isUploadingSharePoint ? (
+            {isUploadingGdrive ? (
               <>
                 <Loader2 className="w-5 h-5 mr-2 animate-spin" />
                 Uploading...
               </>
-            ) : sharePointSuccess ? (
+            ) : gdriveSuccess ? (
               <>
                 <CheckCircle2 className="w-5 h-5 mr-2" />
                 Success!
@@ -808,7 +808,7 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
             ) : (
               <>
                 <Upload className="w-5 h-5 mr-2" />
-                Upload to SharePoint
+                Upload to Gdrive
               </>
             )}
           </Button>

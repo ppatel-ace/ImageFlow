@@ -118,11 +118,13 @@ Preferred communication style: Simple, everyday language.
 
 ### Third-Party Services
 
-**Microsoft Graph API Integration**
-- `@microsoft/microsoft-graph-client` (v3.0.7) for OneDrive and SharePoint API communication
-- Handles file uploads and folder management in OneDrive and SharePoint
+**Cloud Storage API Integration**
+- `@microsoft/microsoft-graph-client` (v3.0.7) for OneDrive API communication
+- `googleapis` (v148.0.0) for Google Drive and Gmail API communication
+- Handles file uploads and folder management in OneDrive and Google Drive
 - OneDrive: Uses Replit's OneDrive connector for OAuth authentication (fully implemented)
-- SharePoint: Uses Replit's SharePoint connector for OAuth authentication (user setup required)
+- Google Drive: Uses Replit's Google Drive connector for OAuth authentication (fully implemented) - aceelectronics385@gmail.com
+- Gmail: Uses Replit's Gmail connector for OAuth authentication (fully implemented) - aceelectronics385@gmail.com
 - Files uploaded with Customer Name/Work Order Number folder structure
 
 ### Database

@@ -3,7 +3,7 @@ import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import multer from "multer";
 import { uploadFileToOneDrive } from "./onedrive";
-import { uploadFileToSharePoint } from "./sharepoint";
+import { uploadFileToGoogleDrive } from "./gdrive";
 import { getAllWorkOrders, getPartNumbersByWorkOrder, getRevByPartNumber, reloadExcelData, getCurrentFileName } from "./excelParser";
 import { checkForNewExcelFile } from "./gmailService";
 
@@ -52,7 +52,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/upload/sharepoint", upload.single("imageFile"), async (req, res) => {
+  app.post("/api/upload/gdrive", upload.single("imageFile"), async (req, res) => {
     try {
       if (!req.file) {
         return res.status(400).json({ error: "No file uploaded" });
@@ -67,7 +67,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const extension = req.file.originalname.split('.').pop() || 'jpg';
       const fileName = `${imageName}.${extension}`;
 
-      const result = await uploadFileToSharePoint(
+      const result = await uploadFileToGoogleDrive(
         customerName,
         dept,
         workOrderNumber,
@@ -77,11 +77,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       res.json(result);
     } catch (error: any) {
-      console.error("SharePoint upload error:", error);
+      console.error("Google Drive upload error:", error);
       
       if (error.message.includes('not connected') || error.message.includes('Authentication required')) {
         return res.status(401).json({ 
-          error: "SharePoint not connected",
+          error: "Google Drive not connected",
           message: error.message,
           requiresAuth: true
         });
