@@ -9,7 +9,7 @@ import { Card } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Command, CommandEmpty, CommandGroup, CommandItem, CommandList } from "@/components/ui/command";
-import { Camera, Upload, FolderOpen, CheckCircle2, Loader2, Image as ImageIcon, Download, Check } from "lucide-react";
+import { Camera, Upload, FolderOpen, CheckCircle2, Loader2, Image as ImageIcon, Download, Check, RefreshCw, Mail } from "lucide-react";
 import { format } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
 import { useQuery } from "@tanstack/react-query";
@@ -48,6 +48,7 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
   const [workOrderSearch, setWorkOrderSearch] = useState("");
   const [partNumberOpen, setPartNumberOpen] = useState(false);
   const [partNumberSearch, setPartNumberSearch] = useState("");
+  const [isCheckingGmail, setIsCheckingGmail] = useState(false);
   const { toast } = useToast();
 
   // Fetch all work orders
@@ -355,6 +356,41 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
     }
   };
 
+  const handleCheckGmail = async () => {
+    setIsCheckingGmail(true);
+    try {
+      const response = await fetch("/api/check-gmail", {
+        method: "POST",
+      });
+
+      const result = await response.json();
+
+      if (result.success) {
+        toast({
+          title: "Excel Data Updated!",
+          description: `Updated from email received ${result.emailDate ? new Date(result.emailDate).toLocaleString() : 'recently'}. File: ${result.fileName}`,
+        });
+        
+        // Reload the page to refresh work orders
+        window.location.reload();
+      } else {
+        toast({
+          title: "No Updates Found",
+          description: result.message || "No new Excel files found in Gmail from scanner@aceelectronics.com",
+        });
+      }
+    } catch (error: any) {
+      console.error("Gmail check error:", error);
+      toast({
+        title: "Check Failed",
+        description: error.message || "Failed to check Gmail for updates",
+        variant: "destructive",
+      });
+    } finally {
+      setIsCheckingGmail(false);
+    }
+  };
+
   const customerName = form.watch("customerName");
   const partNumber = form.watch("partNumber");
 
@@ -372,9 +408,34 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
 
   return (
     <div className="w-full max-w-3xl mx-auto px-3 sm:px-4 md:px-6 space-y-4 sm:space-y-6">
-      <div className="text-center space-y-1 sm:space-y-2">
-        <h1 className="text-2xl sm:text-3xl md:text-4xl font-semibold text-foreground">Ace Image Organizer</h1>
-        <p className="text-muted-foreground text-base sm:text-lg">Capture and organize images</p>
+      <div className="text-center space-y-3 sm:space-y-4">
+        <div className="space-y-1 sm:space-y-2">
+          <h1 className="text-2xl sm:text-3xl md:text-4xl font-semibold text-foreground">Ace Image Organizer</h1>
+          <p className="text-muted-foreground text-base sm:text-lg">Capture and organize images</p>
+        </div>
+        <div className="flex justify-center">
+          <Button
+            type="button"
+            variant="outline"
+            size="lg"
+            className="min-h-12 sm:min-h-14"
+            onClick={handleCheckGmail}
+            disabled={isCheckingGmail}
+            data-testid="button-check-gmail"
+          >
+            {isCheckingGmail ? (
+              <>
+                <Loader2 className="w-5 h-5 mr-2 animate-spin" />
+                Checking...
+              </>
+            ) : (
+              <>
+                <Mail className="w-5 h-5 mr-2" />
+                Check for Updates
+              </>
+            )}
+          </Button>
+        </div>
       </div>
 
       <form onSubmit={form.handleSubmit(handleFormSubmit)} className="space-y-4 sm:space-y-6">
