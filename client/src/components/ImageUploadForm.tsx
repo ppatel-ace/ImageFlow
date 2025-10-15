@@ -424,11 +424,16 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
     }
   };
 
-  // Load last auto-check date and Gmail connection status on mount
+  // Load last auto-check date, manual check date, and Gmail connection status on mount
   useEffect(() => {
     const lastCheck = localStorage.getItem("lastAutoCheckDate");
     if (lastCheck) {
       setLastAutoCheck(lastCheck);
+    }
+
+    const lastManual = localStorage.getItem("lastManualCheck");
+    if (lastManual) {
+      setLastManualCheck(lastManual);
     }
 
     // Check Gmail connection status
@@ -646,6 +651,11 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
                 {lastAutoCheck && (
                   <p className="text-xs">
                     Last auto-check: {new Date(lastAutoCheck).toLocaleString()}
+                  </p>
+                )}
+                {lastManualCheck && (
+                  <p className="text-xs">
+                    Last manual check: {new Date(lastManualCheck).toLocaleString()}
                   </p>
                 )}
               </div>
