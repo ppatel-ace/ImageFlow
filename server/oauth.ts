@@ -86,9 +86,10 @@ export function hasValidTokens(): boolean {
     return false;
   }
   
-  // Check if token is expired
+  // If token is expired but we have a refresh token, still consider it valid
+  // The getGmailClient function will handle refreshing it automatically
   if (tokens.expiry_date && tokens.expiry_date < Date.now()) {
-    return false;
+    return !!tokens.refresh_token; // Valid if we have a refresh token
   }
   
   return true;

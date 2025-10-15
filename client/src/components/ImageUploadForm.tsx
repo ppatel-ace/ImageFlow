@@ -50,6 +50,8 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
   const [partNumberSearch, setPartNumberSearch] = useState("");
   const [isCheckingGmail, setIsCheckingGmail] = useState(false);
   const [lastAutoCheck, setLastAutoCheck] = useState<string | null>(null);
+  const [gmailConnected, setGmailConnected] = useState(false);
+  const [isConnectingGmail, setIsConnectingGmail] = useState(false);
   const { toast } = useToast();
 
   // Fetch all work orders
@@ -415,16 +417,90 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
     }
   };
 
-  // Load last auto-check date on mount
+  // Load last auto-check date and Gmail connection status on mount
   useEffect(() => {
     const lastCheck = localStorage.getItem("lastAutoCheckDate");
     if (lastCheck) {
       setLastAutoCheck(lastCheck);
     }
-  }, []);
 
-  // Auto-check on page load (runs once when component mounts)
+    // Check Gmail connection status
+    checkGmailStatus();
+
+    // Listen for OAuth callback messages
+    const handleMessage = (event: MessageEvent) => {
+      // Validate origin for security - only accept messages from our own app
+      if (event.origin !== window.location.origin) {
+        console.warn('Rejected message from untrusted origin:', event.origin);
+        return;
+      }
+
+      if (event.data.type === 'GMAIL_AUTH_SUCCESS') {
+        setGmailConnected(true);
+        setIsConnectingGmail(false);
+        toast({
+          title: "Gmail Connected!",
+          description: "You can now check for Excel updates automatically.",
+        });
+      } else if (event.data.type === 'GMAIL_AUTH_ERROR') {
+        setIsConnectingGmail(false);
+        toast({
+          title: "Connection Failed",
+          description: event.data.error || "Failed to connect Gmail",
+          variant: "destructive",
+        });
+      }
+    };
+
+    window.addEventListener('message', handleMessage);
+    return () => window.removeEventListener('message', handleMessage);
+  }, [toast]);
+
+  // Check Gmail connection status
+  const checkGmailStatus = async () => {
+    try {
+      const response = await fetch('/oauth/gmail/status');
+      const data = await response.json();
+      setGmailConnected(data.connected);
+    } catch (error) {
+      console.error('Error checking Gmail status:', error);
+      setGmailConnected(false);
+    }
+  };
+
+  // Handle Gmail connection
+  const handleConnectGmail = async () => {
+    try {
+      setIsConnectingGmail(true);
+      const response = await fetch('/oauth/gmail/auth');
+      const data = await response.json();
+      
+      // Open OAuth window
+      const width = 600;
+      const height = 700;
+      const left = window.screenX + (window.outerWidth - width) / 2;
+      const top = window.screenY + (window.outerHeight - height) / 2;
+      
+      window.open(
+        data.authUrl,
+        'Gmail OAuth',
+        `width=${width},height=${height},left=${left},top=${top}`
+      );
+    } catch (error: any) {
+      console.error('Error initiating Gmail auth:', error);
+      setIsConnectingGmail(false);
+      toast({
+        title: "Connection Failed",
+        description: error.message || "Failed to initiate Gmail connection",
+        variant: "destructive",
+      });
+    }
+  };
+
+  // Auto-check on page load (runs once when Gmail is connected)
   useEffect(() => {
+    if (!gmailConnected) return;
+
     const performAutoCheck = async () => {
       const lastPageLoadCheckDate = localStorage.getItem("lastPageLoadCheck");
       
@@ -446,10 +522,12 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
     };
 
     performAutoCheck();
-  }, []); // Empty dependency array = runs once on mount
+  }, [gmailConnected]); // Run when Gmail connection status changes
 
   // Scheduled check at 10:15 AM EST/EDT daily
   useEffect(() => {
+    if (!gmailConnected) return;
+
     const getEasternDateString = (date: Date): string => {
       const formatter = new Intl.DateTimeFormat("en-US", {
         timeZone: "America/New_York",
@@ -505,7 +583,7 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
     checkScheduledTime();
 
     return () => clearInterval(interval);
-  }, []);
+  }, [gmailConnected]);
 
   const customerName = form.watch("customerName");
   const partNumber = form.watch("partNumber");
@@ -530,35 +608,69 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
           <p className="text-muted-foreground text-base sm:text-lg">Capture and organize images</p>
         </div>
         <div className="flex flex-col items-center gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            size="lg"
-            className="min-h-12 sm:min-h-14"
-            onClick={() => handleCheckGmail(false)}
-            disabled={isCheckingGmail}
-            data-testid="button-check-gmail"
-          >
-            {isCheckingGmail ? (
-              <>
-                <Loader2 className="w-5 h-5 mr-2 animate-spin" />
-                Checking...
-              </>
-            ) : (
-              <>
-                <Mail className="w-5 h-5 mr-2" />
-                Check for Updates
-              </>
-            )}
-          </Button>
-          <div className="text-xs text-muted-foreground text-center">
-            <p>Auto-updates: Daily at 10:15 AM EST & on page load</p>
-            {lastAutoCheck && (
-              <p className="text-xs">
-                Last auto-check: {new Date(lastAutoCheck).toLocaleString()}
-              </p>
-            )}
-          </div>
+          {gmailConnected ? (
+            <>
+              <Button
+                type="button"
+                variant="outline"
+                size="lg"
+                className="min-h-12 sm:min-h-14"
+                onClick={() => handleCheckGmail(false)}
+                disabled={isCheckingGmail}
+                data-testid="button-check-gmail"
+              >
+                {isCheckingGmail ? (
+                  <>
+                    <Loader2 className="w-5 h-5 mr-2 animate-spin" />
+                    Checking...
+                  </>
+                ) : (
+                  <>
+                    <Mail className="w-5 h-5 mr-2" />
+                    Check for Updates
+                  </>
+                )}
+              </Button>
+              <div className="text-xs text-muted-foreground text-center">
+                <p className="flex items-center gap-1 justify-center">
+                  <Check className="w-3 h-3 text-green-600" />
+                  Gmail connected - Auto-updates: Daily at 10:15 AM EST & on page load
+                </p>
+                {lastAutoCheck && (
+                  <p className="text-xs">
+                    Last auto-check: {new Date(lastAutoCheck).toLocaleString()}
+                  </p>
+                )}
+              </div>
+            </>
+          ) : (
+            <>
+              <Button
+                type="button"
+                variant="default"
+                size="lg"
+                className="min-h-12 sm:min-h-14"
+                onClick={handleConnectGmail}
+                disabled={isConnectingGmail}
+                data-testid="button-connect-gmail"
+              >
+                {isConnectingGmail ? (
+                  <>
+                    <Loader2 className="w-5 h-5 mr-2 animate-spin" />
+                    Connecting...
+                  </>
+                ) : (
+                  <>
+                    <Mail className="w-5 h-5 mr-2" />
+                    Connect Gmail for Auto-Updates
+                  </>
+                )}
+              </Button>
+              <div className="text-xs text-muted-foreground text-center">
+                <p>Connect Gmail to enable automatic Excel updates</p>
+              </div>
+            </>
+          )}
         </div>
       </div>
 
