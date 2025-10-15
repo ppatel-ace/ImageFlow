@@ -391,8 +391,10 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
           description: `Updated from email received ${result.emailDate ? new Date(result.emailDate).toLocaleString() : 'recently'}. File: ${result.fileName}`,
         });
         
-        // Reload the page to refresh work orders
-        window.location.reload();
+        // Reload the page after a short delay so the toast is visible
+        setTimeout(() => {
+          window.location.reload();
+        }, 2000);
       } else {
         // Only show toast for manual checks, silent for auto-checks with no updates
         if (!isAutoCheck) {
