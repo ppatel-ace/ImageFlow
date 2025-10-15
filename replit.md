@@ -108,12 +108,21 @@ Preferred communication style: Simple, everyday language.
   - Scheduled check fires at exactly 10:15 AM Eastern time regardless of user's local timezone
   - Date comparisons for scheduled checks use Eastern timezone to prevent skipped runs
   - Silent auto-checks (no toast notifications if no updates found)
+  - Only runs when Gmail is connected (gmailConnected state is true)
   - lastAutoCheckDate tracks most recent auto-check for UI display
 - "Check for Updates" button in UI for manual checks (shows toast notifications)
 - System searches for latest email with Excel attachment (.xlsx or .xls)
 - Downloads and saves Excel file with timestamp to attached_assets folder
 - Automatically reloads work order data from new file
-- Gmail OAuth integration via Replit connector for secure authentication
+- **Custom OAuth Implementation**:
+  - Custom OAuth2 flow using Google APIs (gmail.readonly and gmail.metadata scopes)
+  - Token storage in .gmail-tokens.json with automatic refresh capability
+  - UI shows "Connect Gmail" button when not authenticated
+  - OAuth popup flow with postMessage for secure callback communication
+  - Origin validation on message handler prevents spoofing attacks
+  - Connection persists through token expiry via refresh_token mechanism
+  - hasValidTokens() returns true if refresh_token exists, even if access_token expired
+  - getGmailClient() automatically refreshes expired tokens before API calls
 - Base64url to base64 conversion for proper Excel file decoding
 - Search query ensures only scanner emails with attachments are processed
 
