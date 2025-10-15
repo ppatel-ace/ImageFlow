@@ -25,8 +25,10 @@ async function getAccessToken() {
     throw new Error('X_REPLIT_TOKEN not found for repl/depl');
   }
 
+  console.log('Fetching Google Drive connector...');
+  
   // Use Google Drive connector which has broader scopes that include Gmail access
-  connectionSettings = await fetch(
+  const response = await fetch(
     'https://' + hostname + '/api/v2/connection?include_secrets=true&connector_names=google-drive',
     {
       headers: {
@@ -34,17 +36,25 @@ async function getAccessToken() {
         'X_REPLIT_TOKEN': xReplitToken
       }
     }
-  ).then(res => res.json()).then(data => data.items?.[0]);
+  );
+
+  const data = await response.json();
+  console.log('Connector response status:', response.status);
+  console.log('Connector response data:', JSON.stringify(data, null, 2));
+
+  connectionSettings = data.items?.[0];
 
   if (!connectionSettings) {
-    throw new Error('Google Drive not connected');
+    throw new Error('Google Drive not connected - no connection settings found. Please reconnect Google Drive in Connectors.');
   }
 
   const accessToken = connectionSettings.settings?.access_token || connectionSettings.settings?.oauth?.credentials?.access_token;
 
   if (!accessToken) {
-    throw new Error('Google Drive not connected - no access token');
+    throw new Error('Google Drive not connected - no access token found in settings');
   }
+  
+  console.log('Successfully retrieved access token');
   return accessToken;
 }
 
