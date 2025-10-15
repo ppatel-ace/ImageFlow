@@ -102,10 +102,10 @@ Preferred communication style: Simple, everyday language.
 - Scanner sends updated work order files from scanner@aceelectronics.com
 - **Automatic Updates**:
   - Auto-check on page load (once per day, tracked separately via lastPageLoadCheck)
-  - Scheduled check at 10:15 AM EST/EDT daily (tracked separately via lastScheduledCheck)
+  - Scheduled check at 7:03 AM EST/EDT daily (tracked separately via lastScheduledCheck)
   - Both checks can run on the same day without interfering with each other
   - Uses Intl.DateTimeFormat with America/New_York timezone for accurate EST/EDT handling
-  - Scheduled check fires at exactly 10:15 AM Eastern time regardless of user's local timezone
+  - Scheduled check fires at exactly 7:03 AM Eastern time regardless of user's local timezone
   - Date comparisons for scheduled checks use Eastern timezone to prevent skipped runs
   - Silent auto-checks (no toast notifications if no updates found)
   - Only runs when Gmail is connected (gmailConnected state is true)

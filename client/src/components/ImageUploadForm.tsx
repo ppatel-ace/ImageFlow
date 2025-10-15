@@ -524,7 +524,7 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
     performAutoCheck();
   }, [gmailConnected]); // Run when Gmail connection status changes
 
-  // Scheduled check at 10:15 AM EST/EDT daily
+  // Scheduled check at 7:03 AM EST/EDT daily
   useEffect(() => {
     if (!gmailConnected) return;
 
@@ -557,8 +557,8 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
       const hours = parseInt(timeParts.find(p => p.type === "hour")?.value || "0");
       const minutes = parseInt(timeParts.find(p => p.type === "minute")?.value || "0");
       
-      // Check if it's 10:15 AM EST/EDT
-      if (hours === 10 && minutes === 15) {
+      // Check if it's 7:03 AM EST/EDT
+      if (hours === 7 && minutes === 3) {
         const lastScheduledCheckDate = localStorage.getItem("lastScheduledCheck");
         
         // Only check if we haven't done the scheduled check today (in Eastern timezone)
@@ -634,7 +634,7 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
               <div className="text-xs text-muted-foreground text-center">
                 <p className="flex items-center gap-1 justify-center">
                   <Check className="w-3 h-3 text-green-600" />
-                  Gmail connected - Auto-updates: Daily at 10:15 AM EST & on page load
+                  Gmail connected - Auto-updates: Daily at 7:03 AM EST & on page load
                 </p>
                 {lastAutoCheck && (
                   <p className="text-xs">
