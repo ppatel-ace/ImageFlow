@@ -99,7 +99,7 @@ Preferred communication style: Simple, everyday language.
 
 **Excel Data Updates via Gmail**
 - Automatic Excel file updates from emails sent to aceelectronics385@gmail.com
-- Scanner sends updated work order files from scanner@aceelectronics.com
+- Scanner sends updated work order files from KSAlerts@aceelectronics.com
 - **Automatic Updates**:
   - Auto-check on page load (once per day, tracked separately via lastPageLoadCheck)
   - Scheduled check at 7:03 AM EST/EDT daily (tracked separately via lastScheduledCheck)

@@ -398,7 +398,7 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
         if (!isAutoCheck) {
           toast({
             title: "No Updates Found",
-            description: result.message || "No new Excel files found in Gmail from scanner@aceelectronics.com",
+            description: result.message || "No new Excel files found in Gmail from KSAlerts@aceelectronics.com",
           });
         }
       }

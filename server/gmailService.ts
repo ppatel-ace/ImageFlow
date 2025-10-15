@@ -19,18 +19,18 @@ export async function checkForNewExcelFile(): Promise<EmailCheckResult> {
   try {
     const gmail = await getGmailClient();
     
-    // Search for emails from scanner@aceelectronics.com with Excel attachments
+    // Search for emails from KSAlerts@aceelectronics.com with Excel attachments
     // Use parentheses to ensure the sender filter applies to both file extensions
     const response = await gmail.users.messages.list({
       userId: 'me',
-      q: 'from:scanner@aceelectronics.com has:attachment (filename:xlsx OR filename:xls)',
+      q: 'from:KSAlerts@aceelectronics.com has:attachment (filename:xlsx OR filename:xls)',
       maxResults: 1,
     });
 
     if (!response.data.messages || response.data.messages.length === 0) {
       return {
         success: false,
-        message: 'No emails found from scanner@aceelectronics.com with Excel attachments'
+        message: 'No emails found from KSAlerts@aceelectronics.com with Excel attachments'
       };
     }
 
