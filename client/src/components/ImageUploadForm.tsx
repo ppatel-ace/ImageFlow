@@ -50,6 +50,7 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
   const [partNumberSearch, setPartNumberSearch] = useState("");
   const [isCheckingGmail, setIsCheckingGmail] = useState(false);
   const [lastAutoCheck, setLastAutoCheck] = useState<string | null>(null);
+  const [lastManualCheck, setLastManualCheck] = useState<string | null>(null);
   const [gmailConnected, setGmailConnected] = useState(false);
   const [isConnectingGmail, setIsConnectingGmail] = useState(false);
   const { toast } = useToast();
@@ -362,10 +363,10 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
   const handleCheckGmail = async (isAutoCheck: boolean = false, checkType: 'pageLoad' | 'scheduled' | 'manual' = 'manual') => {
     setIsCheckingGmail(true);
     
+    const now = new Date().toISOString();
+    
     // Record the auto-check attempt BEFORE making the request
     if (isAutoCheck) {
-      const now = new Date().toISOString();
-      
       // Track page load and scheduled checks separately
       if (checkType === 'pageLoad') {
         localStorage.setItem("lastPageLoadCheck", now);
@@ -376,6 +377,10 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
       // Also update the general last auto-check for UI display
       localStorage.setItem("lastAutoCheckDate", now);
       setLastAutoCheck(now);
+    } else {
+      // Track manual check
+      localStorage.setItem("lastManualCheck", now);
+      setLastManualCheck(now);
     }
     
     try {
