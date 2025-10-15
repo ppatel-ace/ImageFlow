@@ -10,9 +10,9 @@ const __dirname = dirname(__filename);
 const TOKEN_PATH = join(__dirname, '..', '.gmail-tokens.json');
 
 // OAuth2 scopes for Gmail
+// Only need gmail.readonly - it includes full read access including search
 const SCOPES = [
-  'https://www.googleapis.com/auth/gmail.readonly',
-  'https://www.googleapis.com/auth/gmail.metadata'
+  'https://www.googleapis.com/auth/gmail.readonly'
 ];
 
 interface TokenData {
