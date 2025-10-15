@@ -1,76 +1,11 @@
-import { google } from 'googleapis';
 import { writeFileSync } from 'fs';
 import { join } from 'path';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
+import { getGmailClient } from './oauth';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-
-let connectionSettings: any;
-
-async function getAccessToken() {
-  if (connectionSettings && connectionSettings.settings.expires_at && new Date(connectionSettings.settings.expires_at).getTime() > Date.now()) {
-    return connectionSettings.settings.access_token;
-  }
-  
-  const hostname = process.env.REPLIT_CONNECTORS_HOSTNAME
-  const xReplitToken = process.env.REPL_IDENTITY 
-    ? 'repl ' + process.env.REPL_IDENTITY 
-    : process.env.WEB_REPL_RENEWAL 
-    ? 'depl ' + process.env.WEB_REPL_RENEWAL 
-    : null;
-
-  if (!xReplitToken) {
-    throw new Error('X_REPLIT_TOKEN not found for repl/depl');
-  }
-
-  console.log('Fetching Google Drive connector...');
-  
-  // Use Google Drive connector which has broader scopes that include Gmail access
-  const response = await fetch(
-    'https://' + hostname + '/api/v2/connection?include_secrets=true&connector_names=google-drive',
-    {
-      headers: {
-        'Accept': 'application/json',
-        'X_REPLIT_TOKEN': xReplitToken
-      }
-    }
-  );
-
-  const data = await response.json();
-  console.log('Connector response status:', response.status);
-  console.log('Connector response data:', JSON.stringify(data, null, 2));
-
-  connectionSettings = data.items?.[0];
-
-  if (!connectionSettings) {
-    throw new Error('Google Drive not connected - no connection settings found. Please reconnect Google Drive in Connectors.');
-  }
-
-  const accessToken = connectionSettings.settings?.access_token || connectionSettings.settings?.oauth?.credentials?.access_token;
-
-  if (!accessToken) {
-    throw new Error('Google Drive not connected - no access token found in settings');
-  }
-  
-  console.log('Successfully retrieved access token');
-  return accessToken;
-}
-
-// WARNING: Never cache this client.
-// Access tokens expire, so a new client must be created each time.
-// Always call this function again to get a fresh client.
-export async function getUncachableGmailClient() {
-  const accessToken = await getAccessToken();
-
-  const oauth2Client = new google.auth.OAuth2();
-  oauth2Client.setCredentials({
-    access_token: accessToken
-  });
-
-  return google.gmail({ version: 'v1', auth: oauth2Client });
-}
 
 export interface EmailCheckResult {
   success: boolean;
@@ -82,7 +17,7 @@ export interface EmailCheckResult {
 
 export async function checkForNewExcelFile(): Promise<EmailCheckResult> {
   try {
-    const gmail = await getUncachableGmailClient();
+    const gmail = await getGmailClient();
     
     // Search for emails from scanner@aceelectronics.com with Excel attachments
     // Use parentheses to ensure the sender filter applies to both file extensions
