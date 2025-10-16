@@ -110,10 +110,11 @@ export async function checkForNewExcelFile(): Promise<EmailCheckResult> {
 
   } catch (error: any) {
     console.error('Error checking Gmail for Excel file:', error);
+    const errorMessage = error.message || String(error);
     return {
       success: false,
-      message: 'Error checking Gmail',
-      error: error.message || String(error)
+      message: errorMessage, // Return the actual error message instead of generic one
+      error: errorMessage
     };
   }
 }
