@@ -97,36 +97,26 @@ Preferred communication style: Simple, everyday language.
   - Original values preserved in UI and form data for display
 - Local save option for offline scenarios or backup purposes
 
-**Excel Data Updates via Gmail**
-- Automatic Excel file updates from emails sent to aceelectronics385@gmail.com
-- Scanner sends updated work order files from KSAlerts@aceelectronics.com
+**Excel Data Updates via Google Drive**
+- Automatic Excel file updates from Google Drive KSAlert folder
+- Folder ID: 1ixVvva0yj1FyytYBjj0DRuPNT4i76H76 (owned by aceelectronics385@gmail.com)
+- File naming pattern: YYYYMMDD.xlsx (e.g., 20250117.xlsx)
 - **Automatic Updates**:
-  - Auto-check on page load (once per day, tracked separately via lastPageLoadCheck)
-  - Scheduled check at 7:03 AM EST/EDT daily (tracked separately via lastScheduledCheck)
+  - Auto-check on page load (once per day, tracked via lastPageLoadCheck)
+  - Scheduled check at 7:03 AM EST/EDT daily (tracked via lastScheduledCheck)
   - Both checks can run on the same day without interfering with each other
   - Uses Intl.DateTimeFormat with America/New_York timezone for accurate EST/EDT handling
   - Scheduled check fires at exactly 7:03 AM Eastern time regardless of user's local timezone
   - Date comparisons for scheduled checks use Eastern timezone to prevent skipped runs
   - Silent auto-checks (no toast notifications if no updates found)
-  - Only runs when Gmail is connected (gmailConnected state is true)
   - lastAutoCheckDate tracks most recent auto-check for UI display
   - lastManualCheck tracks timestamp of manual check button clicks
 - "Check for Updates" button in UI for manual checks (shows toast notifications)
-- System searches for latest email with Excel attachment (.xlsx or .xls)
-- Downloads and saves Excel file with timestamp to attached_assets folder
+- System searches for latest file in KSAlert folder matching YYYYMMDD.xlsx pattern
+- Downloads and saves Excel file with timestamp to attached_assets folder (OpenOrdersAllQtyOnly_{timestamp}.xlsx)
 - Automatically reloads work order data from new file
-- **Custom OAuth Implementation**:
-  - Custom OAuth2 flow using Google APIs (gmail.readonly scope)
-  - Token storage in .gmail-tokens.json with automatic refresh capability
-  - UI shows "Connect Gmail" button when not authenticated
-  - OAuth popup flow with postMessage for secure callback communication
-  - Origin validation on message handler prevents spoofing attacks
-  - Connection persists through token expiry via refresh_token mechanism
-  - hasValidTokens() returns true if refresh_token exists, even if access_token expired
-  - getGmailClient() automatically refreshes expired tokens before API calls
-  - Note: Replit's Gmail connector doesn't provide gmail.readonly scope needed for message/attachment access
-- Base64url to base64 conversion for proper Excel file decoding
-- Search query ensures only scanner emails with attachments are processed
+- Uses Replit's Google Drive connector for authentication and API access
+- Files are sorted by date in filename (newest first) to find latest work order data
 
 **Development Experience**
 - TypeScript strict mode for type safety across the codebase
@@ -144,7 +134,6 @@ Preferred communication style: Simple, everyday language.
 - Handles file uploads and folder management in OneDrive and Google Drive
 - OneDrive: Uses Replit's OneDrive connector for OAuth authentication (fully implemented)
 - Google Drive: Uses Replit's Google Drive connector for OAuth authentication (fully implemented) - aceelectronics385@gmail.com
-- Gmail: Uses custom OAuth2 implementation for authentication (fully implemented) - aceelectronics385@gmail.com
 - Files uploaded with Customer Name/Work Order Number folder structure
 
 ### Database
