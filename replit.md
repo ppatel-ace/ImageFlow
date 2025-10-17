@@ -1,8 +1,8 @@
-# OneDrive Image Upload & Organization App
+# Ace Image Organizer
 
 ## Overview
 
-This is a work order management application designed for Android tablets that enables users to capture and upload images to OneDrive with automatic folder organization. The app allows users to associate images with specific customers and work orders, creating an organized file structure in OneDrive. Built with a modern React frontend and Express backend, the application emphasizes touch-friendly interactions optimized for tablet use.
+This is a work order management application designed for Android tablets that enables users to capture and upload images to Google Drive with automatic folder organization. The app allows users to associate images with specific customers and work orders, creating an organized file structure. Built with a modern React frontend and Express backend, the application emphasizes touch-friendly interactions optimized for tablet use.
 
 ## User Preferences
 
@@ -95,9 +95,9 @@ Preferred communication style: Simple, everyday language.
 - Automatic file naming format: {partNumber}Rev{rev}-{timestamp}.{extension} (e.g., ABC123RevA-20250108-151500.jpg)
 - Folder structure: ACE/CustomerName/Dept/WorkOrderNumber
 - Path and filename sanitization: Invalid characters (< > : " / \ | ? *) replaced with "_"
-  - Applied to Customer Name in folder paths (server/onedrive.ts, server/sharepoint.ts, client)
+  - Applied to Customer Name in folder paths (server/sharepoint.ts, client)
   - Applied to Part # and Rev in filenames (client/src/components/ImageUploadForm.tsx)
-  - Sanitization occurs in OneDrive uploads, SharePoint uploads, and local file saves
+  - Sanitization occurs in Google Drive uploads, SharePoint uploads, and local file saves
   - Original values preserved in UI and form data for display
 - Local save option for offline scenarios or backup purposes
 
@@ -133,10 +133,9 @@ Preferred communication style: Simple, everyday language.
 ### Third-Party Services
 
 **Cloud Storage API Integration**
-- `@microsoft/microsoft-graph-client` (v3.0.7) for OneDrive API communication
+- `@microsoft/microsoft-graph-client` (v3.0.7) for SharePoint API communication (if needed)
 - `googleapis` (v148.0.0) for Google Drive API communication
-- Handles file uploads and folder management in OneDrive and Google Drive
-- OneDrive: Uses Replit's OneDrive connector for OAuth authentication (fully implemented)
+- Handles file uploads and folder management in Google Drive
 - Google Drive: Uses Replit's Google Drive connector for OAuth authentication (fully implemented) - aceelectronics385@gmail.com
 - Files uploaded with Customer Name/Work Order Number folder structure
 
