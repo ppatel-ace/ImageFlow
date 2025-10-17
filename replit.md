@@ -130,7 +130,7 @@ Preferred communication style: Simple, everyday language.
 
 **Cloud Storage API Integration**
 - `@microsoft/microsoft-graph-client` (v3.0.7) for OneDrive API communication
-- `googleapis` (v148.0.0) for Google Drive and Gmail API communication
+- `googleapis` (v148.0.0) for Google Drive API communication
 - Handles file uploads and folder management in OneDrive and Google Drive
 - OneDrive: Uses Replit's OneDrive connector for OAuth authentication (fully implemented)
 - Google Drive: Uses Replit's Google Drive connector for OAuth authentication (fully implemented) - aceelectronics385@gmail.com
