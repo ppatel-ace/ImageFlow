@@ -36,6 +36,10 @@ Preferred communication style: Simple, everyday language.
   - Real-time filtering as user types
   - Accepts custom work orders not in the Excel file
   - Automatically clears Part #, Rev, and Customer Name when work order changes
+- Part Number auto-selection: When a work order has only ONE part number option, it is automatically selected
+  - Auto-fills Part #, Rev, and Customer Name fields when single option exists
+  - Improves user experience by reducing clicks for single-option work orders
+  - When multiple part numbers exist, user must manually select from dropdown
 - Rev and Customer Name fields: Read-only, auto-filled from Excel data based on selected Part #
 
 **State Management Pattern**

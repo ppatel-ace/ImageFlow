@@ -101,6 +101,19 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
           if (response.ok) {
             const data = await response.json();
             setPartNumberOptions(data);
+            
+            // Auto-select if there's only one part number option
+            if (data.length === 1) {
+              const selectedPart = data[0];
+              form.setValue("partNumber", selectedPart.partNumber);
+              setPartNumberSearch(selectedPart.partNumber);
+              if (selectedPart.rev) {
+                form.setValue("rev", selectedPart.rev);
+              }
+              if (selectedPart.customerName) {
+                form.setValue("customerName", selectedPart.customerName);
+              }
+            }
           } else {
             setPartNumberOptions([]);
           }
