@@ -31,14 +31,8 @@ const uploadFormSchema = z.object({
 
 type UploadFormData = z.infer<typeof uploadFormSchema>;
 
-interface ImageUploadFormProps {
-  onSubmit: (data: UploadFormData & { imageName: string }) => Promise<void>;
-}
-
-export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
+export default function ImageUploadForm() {
   const [imagePreview, setImagePreview] = useState<string | null>(null);
-  const [isUploading, setIsUploading] = useState(false);
-  const [uploadSuccess, setUploadSuccess] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [isSavingLocal, setIsSavingLocal] = useState(false);
   const [isUploadingGdrive, setIsUploadingGdrive] = useState(false);
@@ -182,39 +176,6 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
     }
   };
 
-  const handleFormSubmit = async (data: UploadFormData) => {
-    setIsUploading(true);
-    try {
-      localStorage.setItem("lastDept", data.dept);
-      localStorage.setItem("lastPartNumber", data.partNumber);
-      localStorage.setItem("lastRev", data.rev);
-      localStorage.setItem("lastCustomerName", data.customerName);
-      localStorage.setItem("lastWorkOrderNumber", data.workOrderNumber);
-      
-      const timestamp = format(new Date(), "yyyyMMdd-HHmmss");
-      const sanitizedPartNumber = sanitizePath(data.partNumber);
-      const sanitizedRev = sanitizePath(data.rev);
-      const imageName = `${sanitizedPartNumber}Rev${sanitizedRev}-${timestamp}`;
-      await onSubmit({ ...data, imageName });
-      setUploadSuccess(true);
-      setTimeout(() => {
-        setUploadSuccess(false);
-        form.reset({
-          dept: data.dept,
-          partNumber: data.partNumber,
-          rev: data.rev,
-          customerName: data.customerName,
-          workOrderNumber: data.workOrderNumber,
-        });
-        setImagePreview(null);
-        setSelectedFile(null);
-      }, 2000);
-    } catch (error) {
-      console.error("Upload failed:", error);
-    } finally {
-      setIsUploading(false);
-    }
-  };
 
   const handleSaveLocally = async () => {
     if (!selectedFile || !dept || !customerName || !workOrderNumber || !partNumber) {
@@ -888,12 +849,11 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
                 partNumber: "",
                 rev: "",
                 customerName: "",
-                workOrderNumber: "",
               });
               setImagePreview(null);
               setSelectedFile(null);
             }}
-            disabled={isUploading || isSavingLocal || isUploadingGdrive}
+            disabled={isSavingLocal || isUploadingGdrive}
             data-testid="button-clear"
           >
             Clear Form
@@ -904,7 +864,7 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
             size="lg"
             className="w-full sm:flex-1 min-h-12 sm:min-h-14"
             onClick={handleSaveLocally}
-            disabled={isUploading || isSavingLocal || isUploadingGdrive || !selectedFile || !workOrderMatches}
+            disabled={isSavingLocal || isUploadingGdrive || !selectedFile || !workOrderMatches}
             data-testid="button-save-local"
           >
             {isSavingLocal ? (
@@ -921,57 +881,31 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
           </Button>
         </div>
         
-        <div className="flex flex-col sm:flex-row gap-3">
-          <Button
-            type="submit"
-            size="lg"
-            className="w-full sm:flex-1 min-h-12 sm:min-h-14"
-            disabled={isUploading || isSavingLocal || isUploadingGdrive || !selectedFile || !workOrderMatches}
-            data-testid="button-upload"
-          >
-            {isUploading ? (
-              <>
-                <Loader2 className="w-5 h-5 mr-2 animate-spin" />
-                Uploading...
-              </>
-            ) : uploadSuccess ? (
-              <>
-                <CheckCircle2 className="w-5 h-5 mr-2" />
-                Success!
-              </>
-            ) : (
-              <>
-                <Upload className="w-5 h-5 mr-2" />
-                Upload to OneDrive
-              </>
-            )}
-          </Button>
-          <Button
-            type="button"
-            size="lg"
-            className="w-full sm:flex-1 min-h-12 sm:min-h-14"
-            onClick={handleGdriveUpload}
-            disabled={isUploading || isSavingLocal || isUploadingGdrive || !selectedFile || !workOrderMatches}
-            data-testid="button-upload-gdrive"
-          >
-            {isUploadingGdrive ? (
-              <>
-                <Loader2 className="w-5 h-5 mr-2 animate-spin" />
-                Uploading...
-              </>
-            ) : gdriveSuccess ? (
-              <>
-                <CheckCircle2 className="w-5 h-5 mr-2" />
-                Success!
-              </>
-            ) : (
-              <>
-                <Upload className="w-5 h-5 mr-2" />
-                Upload to Gdrive
-              </>
-            )}
-          </Button>
-        </div>
+        <Button
+          type="button"
+          size="lg"
+          className="w-full min-h-12 sm:min-h-14"
+          onClick={handleGdriveUpload}
+          disabled={isSavingLocal || isUploadingGdrive || !selectedFile || !workOrderMatches}
+          data-testid="button-upload-gdrive"
+        >
+          {isUploadingGdrive ? (
+            <>
+              <Loader2 className="w-5 h-5 mr-2 animate-spin" />
+              Uploading...
+            </>
+          ) : gdriveSuccess ? (
+            <>
+              <CheckCircle2 className="w-5 h-5 mr-2" />
+              Success!
+            </>
+          ) : (
+            <>
+              <Upload className="w-5 h-5 mr-2" />
+              Upload to Google Drive
+            </>
+          )}
+        </Button>
       </form>
       
       <div className="text-center mt-8 pb-4">
