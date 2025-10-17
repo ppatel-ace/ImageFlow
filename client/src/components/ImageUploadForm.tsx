@@ -558,7 +558,7 @@ export default function ImageUploadForm() {
         </div>
       </div>
 
-      <form onSubmit={form.handleSubmit(handleFormSubmit)} className="space-y-4 sm:space-y-6">
+      <form className="space-y-4 sm:space-y-6">
         <Card className="p-4 sm:p-6 space-y-4 sm:space-y-6">
           <div className="space-y-3 sm:space-y-4">
             <div className="space-y-2">
