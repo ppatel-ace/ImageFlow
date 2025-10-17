@@ -2,54 +2,12 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import multer from "multer";
-import { uploadFileToOneDrive } from "./onedrive";
 import { uploadFileToGoogleDrive, checkForNewExcelFile } from "./gdrive";
 import { getAllWorkOrders, getPartNumbersByWorkOrder, getRevByPartNumber, reloadExcelData, getCurrentFileName } from "./excelParser";
 
 const upload = multer({ storage: multer.memoryStorage() });
 
 export async function registerRoutes(app: Express): Promise<Server> {
-  app.post("/api/upload/onedrive", upload.single("imageFile"), async (req, res) => {
-    try {
-      if (!req.file) {
-        return res.status(400).json({ error: "No file uploaded" });
-      }
-
-      const { customerName, dept, workOrderNumber, imageName } = req.body;
-
-      if (!customerName || !dept || !workOrderNumber || !imageName) {
-        return res.status(400).json({ error: "Missing required fields" });
-      }
-
-      const extension = req.file.originalname.split('.').pop() || 'jpg';
-      const fileName = `${imageName}.${extension}`;
-
-      const result = await uploadFileToOneDrive(
-        customerName,
-        dept,
-        workOrderNumber,
-        fileName,
-        req.file.buffer
-      );
-
-      res.json(result);
-    } catch (error: any) {
-      console.error("OneDrive upload error:", error);
-      
-      if (error.message.includes('not connected') || error.message.includes('Authentication required')) {
-        return res.status(401).json({ 
-          error: "OneDrive not connected",
-          message: error.message,
-          requiresAuth: true
-        });
-      }
-
-      res.status(500).json({ 
-        error: "Upload failed", 
-        message: error.message 
-      });
-    }
-  });
 
   app.post("/api/upload/gdrive", upload.single("imageFile"), async (req, res) => {
     try {
