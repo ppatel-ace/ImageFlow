@@ -9,7 +9,7 @@ import { Card } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Command, CommandEmpty, CommandGroup, CommandItem, CommandList } from "@/components/ui/command";
-import { Camera, Upload, FolderOpen, CheckCircle2, Loader2, Image as ImageIcon, Download, Check, RefreshCw, Mail } from "lucide-react";
+import { Camera, Upload, FolderOpen, CheckCircle2, Loader2, Image as ImageIcon, Download, Check, RefreshCw } from "lucide-react";
 import { format } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
 import { useQuery } from "@tanstack/react-query";
@@ -48,11 +48,9 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
   const [workOrderSearch, setWorkOrderSearch] = useState("");
   const [partNumberOpen, setPartNumberOpen] = useState(false);
   const [partNumberSearch, setPartNumberSearch] = useState("");
-  const [isCheckingGmail, setIsCheckingGmail] = useState(false);
+  const [isCheckingUpdates, setIsCheckingUpdates] = useState(false);
   const [lastAutoCheck, setLastAutoCheck] = useState<string | null>(null);
   const [lastManualCheck, setLastManualCheck] = useState<string | null>(null);
-  const [gmailConnected, setGmailConnected] = useState(false);
-  const [isConnectingGmail, setIsConnectingGmail] = useState(false);
   const { toast } = useToast();
 
   // Fetch all work orders
@@ -360,8 +358,8 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
     }
   };
 
-  const handleCheckGmail = async (isAutoCheck: boolean = false, checkType: 'pageLoad' | 'scheduled' | 'manual' = 'manual') => {
-    setIsCheckingGmail(true);
+  const handleCheckUpdates = async (isAutoCheck: boolean = false, checkType: 'pageLoad' | 'scheduled' | 'manual' = 'manual') => {
+    setIsCheckingUpdates(true);
     
     const now = new Date().toISOString();
     
@@ -384,7 +382,7 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
     }
     
     try {
-      const response = await fetch("/api/check-gmail", {
+      const response = await fetch("/api/check-excel-updates", {
         method: "POST",
       });
 
@@ -393,7 +391,7 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
       if (result.success) {
         toast({
           title: isAutoCheck ? "Auto-Update Successful!" : "Excel Data Updated!",
-          description: `Updated from email received ${result.emailDate ? new Date(result.emailDate).toLocaleString() : 'recently'}. File: ${result.fileName}`,
+          description: `Updated from Google Drive file: ${result.fileDate}.xlsx`,
         });
         
         // Reload the page after a short delay so the toast is visible
@@ -405,26 +403,26 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
         if (!isAutoCheck) {
           toast({
             title: "No Updates Found",
-            description: result.message || "No new Excel files found in Gmail from KSAlerts@aceelectronics.com",
+            description: result.message || "No new Excel files found in Google Drive KSAlert folder",
           });
         }
       }
     } catch (error: any) {
-      console.error("Gmail check error:", error);
+      console.error("Update check error:", error);
       // Only show error toast for manual checks
       if (!isAutoCheck) {
         toast({
           title: "Check Failed",
-          description: error.message || "Failed to check Gmail for updates",
+          description: error.message || "Failed to check for updates",
           variant: "destructive",
         });
       }
     } finally {
-      setIsCheckingGmail(false);
+      setIsCheckingUpdates(false);
     }
   };
 
-  // Load last auto-check date, manual check date, and Gmail connection status on mount
+  // Load last auto-check date and manual check date on mount
   useEffect(() => {
     const lastCheck = localStorage.getItem("lastAutoCheckDate");
     if (lastCheck) {
@@ -435,83 +433,10 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
     if (lastManual) {
       setLastManualCheck(lastManual);
     }
+  }, []);
 
-    // Check Gmail connection status
-    checkGmailStatus();
-
-    // Listen for OAuth callback messages
-    const handleMessage = (event: MessageEvent) => {
-      // Validate origin for security - only accept messages from our own app
-      if (event.origin !== window.location.origin) {
-        console.warn('Rejected message from untrusted origin:', event.origin);
-        return;
-      }
-
-      if (event.data.type === 'GMAIL_AUTH_SUCCESS') {
-        setGmailConnected(true);
-        setIsConnectingGmail(false);
-        toast({
-          title: "Gmail Connected!",
-          description: "You can now check for Excel updates automatically.",
-        });
-      } else if (event.data.type === 'GMAIL_AUTH_ERROR') {
-        setIsConnectingGmail(false);
-        toast({
-          title: "Connection Failed",
-          description: event.data.error || "Failed to connect Gmail",
-          variant: "destructive",
-        });
-      }
-    };
-
-    window.addEventListener('message', handleMessage);
-    return () => window.removeEventListener('message', handleMessage);
-  }, [toast]);
-
-  // Check Gmail connection status
-  const checkGmailStatus = async () => {
-    try {
-      const response = await fetch('/oauth/gmail/status');
-      const data = await response.json();
-      setGmailConnected(data.connected);
-    } catch (error) {
-      console.error('Error checking Gmail status:', error);
-      setGmailConnected(false);
-    }
-  };
-
-  // Handle Gmail connection
-  const handleConnectGmail = async () => {
-    try {
-      setIsConnectingGmail(true);
-      const response = await fetch('/oauth/gmail/auth');
-      const data = await response.json();
-      
-      // Open OAuth window
-      const width = 600;
-      const height = 700;
-      const left = window.screenX + (window.outerWidth - width) / 2;
-      const top = window.screenY + (window.outerHeight - height) / 2;
-      
-      window.open(
-        data.authUrl,
-        'Gmail OAuth',
-        `width=${width},height=${height},left=${left},top=${top}`
-      );
-    } catch (error: any) {
-      console.error('Error initiating Gmail auth:', error);
-      setIsConnectingGmail(false);
-      toast({
-        title: "Connection Failed",
-        description: error.message || "Failed to initiate Gmail connection",
-        variant: "destructive",
-      });
-    }
-  };
-
-  // Auto-check on page load (runs once when Gmail is connected)
+  // Auto-check on page load (runs once)
   useEffect(() => {
-    if (!gmailConnected) return;
 
     const performAutoCheck = async () => {
       const lastPageLoadCheckDate = localStorage.getItem("lastPageLoadCheck");
@@ -529,16 +454,15 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
       
       // Wait 2 seconds after page load to check
       setTimeout(() => {
-        handleCheckGmail(true, 'pageLoad');
+        handleCheckUpdates(true, 'pageLoad');
       }, 2000);
     };
 
     performAutoCheck();
-  }, [gmailConnected]); // Run when Gmail connection status changes
+  }, []); // Run once on mount
 
   // Scheduled check at 7:03 AM EST/EDT daily
   useEffect(() => {
-    if (!gmailConnected) return;
 
     const getEasternDateString = (date: Date): string => {
       const formatter = new Intl.DateTimeFormat("en-US", {
@@ -584,7 +508,7 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
           }
         }
         
-        handleCheckGmail(true, 'scheduled');
+        handleCheckUpdates(true, 'scheduled');
       }
     };
 
@@ -595,7 +519,7 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
     checkScheduledTime();
 
     return () => clearInterval(interval);
-  }, [gmailConnected]);
+  }, []);
 
   const customerName = form.watch("customerName");
   const partNumber = form.watch("partNumber");
@@ -620,74 +544,43 @@ export default function ImageUploadForm({ onSubmit }: ImageUploadFormProps) {
           <p className="text-muted-foreground text-base sm:text-lg">Capture and organize images</p>
         </div>
         <div className="flex flex-col items-center gap-2">
-          {gmailConnected ? (
-            <>
-              <Button
-                type="button"
-                variant="outline"
-                size="lg"
-                className="min-h-12 sm:min-h-14"
-                onClick={() => handleCheckGmail(false)}
-                disabled={isCheckingGmail}
-                data-testid="button-check-gmail"
-              >
-                {isCheckingGmail ? (
-                  <>
-                    <Loader2 className="w-5 h-5 mr-2 animate-spin" />
-                    Checking...
-                  </>
-                ) : (
-                  <>
-                    <Mail className="w-5 h-5 mr-2" />
-                    Check for Updates
-                  </>
-                )}
-              </Button>
-              <div className="text-xs text-muted-foreground text-center">
-                <p className="flex items-center gap-1 justify-center">
-                  <Check className="w-3 h-3 text-green-600" />
-                  Gmail connected - Auto-updates: Daily at 7:03 AM EST & on page load
-                </p>
-                {lastAutoCheck && (
-                  <p className="text-xs">
-                    Last auto-check: {new Date(lastAutoCheck).toLocaleString()}
-                  </p>
-                )}
-                {lastManualCheck && (
-                  <p className="text-xs">
-                    Last manual check: {new Date(lastManualCheck).toLocaleString()}
-                  </p>
-                )}
-              </div>
-            </>
-          ) : (
-            <>
-              <Button
-                type="button"
-                variant="default"
-                size="lg"
-                className="min-h-12 sm:min-h-14"
-                onClick={handleConnectGmail}
-                disabled={isConnectingGmail}
-                data-testid="button-connect-gmail"
-              >
-                {isConnectingGmail ? (
-                  <>
-                    <Loader2 className="w-5 h-5 mr-2 animate-spin" />
-                    Connecting...
-                  </>
-                ) : (
-                  <>
-                    <Mail className="w-5 h-5 mr-2" />
-                    Connect Gmail for Auto-Updates
-                  </>
-                )}
-              </Button>
-              <div className="text-xs text-muted-foreground text-center">
-                <p>Connect Gmail to enable automatic Excel updates</p>
-              </div>
-            </>
-          )}
+          <Button
+            type="button"
+            variant="outline"
+            size="lg"
+            className="min-h-12 sm:min-h-14"
+            onClick={() => handleCheckUpdates(false)}
+            disabled={isCheckingUpdates}
+            data-testid="button-check-updates"
+          >
+            {isCheckingUpdates ? (
+              <>
+                <Loader2 className="w-5 h-5 mr-2 animate-spin" />
+                Checking...
+              </>
+            ) : (
+              <>
+                <RefreshCw className="w-5 h-5 mr-2" />
+                Check for Updates
+              </>
+            )}
+          </Button>
+          <div className="text-xs text-muted-foreground text-center">
+            <p className="flex items-center gap-1 justify-center">
+              <Check className="w-3 h-3 text-green-600" />
+              Google Drive KSAlert folder - Auto-updates: Daily at 7:03 AM EST & on page load
+            </p>
+            {lastAutoCheck && (
+              <p className="text-xs">
+                Last auto-check: {new Date(lastAutoCheck).toLocaleString()}
+              </p>
+            )}
+            {lastManualCheck && (
+              <p className="text-xs">
+                Last manual check: {new Date(lastManualCheck).toLocaleString()}
+              </p>
+            )}
+          </div>
         </div>
       </div>
 
