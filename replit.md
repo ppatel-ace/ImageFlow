@@ -110,12 +110,13 @@ Preferred communication style: Simple, everyday language.
   - Silent auto-checks (no toast notifications if no updates found)
   - Only runs when Gmail is connected (gmailConnected state is true)
   - lastAutoCheckDate tracks most recent auto-check for UI display
+  - lastManualCheck tracks timestamp of manual check button clicks
 - "Check for Updates" button in UI for manual checks (shows toast notifications)
 - System searches for latest email with Excel attachment (.xlsx or .xls)
 - Downloads and saves Excel file with timestamp to attached_assets folder
 - Automatically reloads work order data from new file
 - **Custom OAuth Implementation**:
-  - Custom OAuth2 flow using Google APIs (gmail.readonly and gmail.metadata scopes)
+  - Custom OAuth2 flow using Google APIs (gmail.readonly scope)
   - Token storage in .gmail-tokens.json with automatic refresh capability
   - UI shows "Connect Gmail" button when not authenticated
   - OAuth popup flow with postMessage for secure callback communication
@@ -123,6 +124,7 @@ Preferred communication style: Simple, everyday language.
   - Connection persists through token expiry via refresh_token mechanism
   - hasValidTokens() returns true if refresh_token exists, even if access_token expired
   - getGmailClient() automatically refreshes expired tokens before API calls
+  - Note: Replit's Gmail connector doesn't provide gmail.readonly scope needed for message/attachment access
 - Base64url to base64 conversion for proper Excel file decoding
 - Search query ensures only scanner emails with attachments are processed
 
@@ -142,7 +144,7 @@ Preferred communication style: Simple, everyday language.
 - Handles file uploads and folder management in OneDrive and Google Drive
 - OneDrive: Uses Replit's OneDrive connector for OAuth authentication (fully implemented)
 - Google Drive: Uses Replit's Google Drive connector for OAuth authentication (fully implemented) - aceelectronics385@gmail.com
-- Gmail: Uses Replit's Gmail connector for OAuth authentication (fully implemented) - aceelectronics385@gmail.com
+- Gmail: Uses custom OAuth2 implementation for authentication (fully implemented) - aceelectronics385@gmail.com
 - Files uploaded with Customer Name/Work Order Number folder structure
 
 ### Database
