@@ -160,6 +160,11 @@ export default function ImageUploadForm() {
     setCapturedImages(prev => prev.filter(img => img.id !== imageId));
   };
 
+  // Helper to generate unique filename
+  const generateFilename = (fileExtension: string) => {
+    const timestamp = format(new Date(), "yyyyMMdd-HHmmss-SSS");
+    return `${sanitizePath(partNumber)}Rev${sanitizePath(rev)}-${timestamp}.${fileExtension}`;
+  };
 
   const handleSaveLocally = async () => {
     if (capturedImages.length === 0 || !dept || !customerName || !workOrderNumber || !partNumber) {
@@ -172,38 +177,19 @@ export default function ImageUploadForm() {
     }
 
     setIsSavingLocal(true);
+    const sanitizedCustomerName = sanitizePath(customerName);
+    
     try {
-      // Sanitize customer name for folder path (replace invalid characters with underscore)
-      const sanitizedCustomerName = sanitizePath(customerName);
-      const sanitizedPartNumber = sanitizePath(partNumber);
-      const sanitizedRev = sanitizePath(rev);
-      
-      // Check if the File System Access API is supported
       if ('showDirectoryPicker' in window) {
-        // Use File System Access API to create folder structure
         const directoryHandle = await (window as any).showDirectoryPicker();
+        const folderHandle = await directoryHandle.getDirectoryHandle('ACE', { create: true })
+          .then((h: any) => h.getDirectoryHandle(sanitizedCustomerName, { create: true }))
+          .then((h: any) => h.getDirectoryHandle(dept, { create: true }))
+          .then((h: any) => h.getDirectoryHandle(workOrderNumber, { create: true }));
         
-        // Create or get ACE folder
-        const aceFolderHandle = await directoryHandle.getDirectoryHandle('ACE', { create: true });
-        
-        // Create or get customer name folder (sanitized)
-        const customerFolderHandle = await aceFolderHandle.getDirectoryHandle(sanitizedCustomerName, { create: true });
-        
-        // Create or get dept folder
-        const deptFolderHandle = await customerFolderHandle.getDirectoryHandle(dept, { create: true });
-        
-        // Create or get work order folder inside dept folder
-        const workOrderFolderHandle = await deptFolderHandle.getDirectoryHandle(workOrderNumber, { create: true });
-        
-        // Save all captured images
-        for (let i = 0; i < capturedImages.length; i++) {
-          const image = capturedImages[i];
-          const timestamp = format(new Date(), "yyyyMMdd-HHmmss-SSS");
-          const extension = image.file.name.split('.').pop() || 'jpg';
-          const filename = `${sanitizedPartNumber}Rev${sanitizedRev}-${timestamp}.${extension}`;
-          
-          // Create and write the file
-          const fileHandle = await workOrderFolderHandle.getFileHandle(filename, { create: true });
+        for (const image of capturedImages) {
+          const ext = image.file.name.split('.').pop() || 'jpg';
+          const fileHandle = await folderHandle.getFileHandle(generateFilename(ext), { create: true });
           const writable = await fileHandle.createWritable();
           await writable.write(image.file);
           await writable.close();
@@ -213,21 +199,14 @@ export default function ImageUploadForm() {
           title: "Saved Successfully",
           description: `${capturedImages.length} image(s) saved to ACE/${sanitizedCustomerName}/${dept}/${workOrderNumber}/`,
         });
-        
-        // Clear captured images after successful save
-        setCapturedImages([]);
       } else {
-        // Fallback: simple download for each file
-        for (let i = 0; i < capturedImages.length; i++) {
-          const image = capturedImages[i];
-          const timestamp = format(new Date(), "yyyyMMdd-HHmmss-SSS");
-          const extension = image.file.name.split('.').pop() || 'jpg';
-          const filename = `${sanitizedPartNumber}Rev${sanitizedRev}-${timestamp}.${extension}`;
-          
+        for (const image of capturedImages) {
+          const ext = image.file.name.split('.').pop() || 'jpg';
           const url = URL.createObjectURL(image.file);
-          const a = document.createElement('a');
-          a.href = url;
-          a.download = filename;
+          const a = Object.assign(document.createElement('a'), {
+            href: url,
+            download: generateFilename(ext)
+          });
           document.body.appendChild(a);
           a.click();
           document.body.removeChild(a);
@@ -238,10 +217,9 @@ export default function ImageUploadForm() {
           title: "Download Started",
           description: `${capturedImages.length} image(s) downloaded. Please create folders: ACE/${sanitizedCustomerName}/${dept}/${workOrderNumber}/ and move the files there.`,
         });
-        
-        // Clear captured images after successful download
-        setCapturedImages([]);
       }
+      
+      setCapturedImages([]);
     } catch (error) {
       if ((error as Error).name === 'AbortError') {
         // User cancelled the directory picker
@@ -273,18 +251,14 @@ export default function ImageUploadForm() {
     }
 
     setIsUploadingGdrive(true);
+    
     try {
-      const sanitizedPartNumber = sanitizePath(partNumber);
-      const sanitizedRev = sanitizePath(form.watch("rev"));
-      
       let uploadedCount = 0;
-      const errors: string[] = [];
       
-      // Upload each image sequentially
       for (let i = 0; i < capturedImages.length; i++) {
         const image = capturedImages[i];
         const timestamp = format(new Date(), "yyyyMMdd-HHmmss-SSS");
-        const imageName = `${sanitizedPartNumber}Rev${sanitizedRev}-${timestamp}`;
+        const imageName = `${sanitizePath(partNumber)}Rev${sanitizePath(rev)}-${timestamp}`;
         
         const formData = new FormData();
         formData.append("imageFile", image.file);
@@ -301,21 +275,18 @@ export default function ImageUploadForm() {
 
           const result = await response.json();
 
-          if (!response.ok) {
-            if (result.requiresAuth) {
-              toast({
-                title: "Google Drive Not Connected",
-                description: "Please connect your Google Drive account in the Integrations panel to upload files.",
-                variant: "destructive",
-              });
-              throw new Error(result.message);
-            }
-            errors.push(`Image ${i + 1}: ${result.error || "Upload failed"}`);
-          } else {
-            uploadedCount++;
+          if (!response.ok && result.requiresAuth) {
+            toast({
+              title: "Google Drive Not Connected",
+              description: "Please connect your Google Drive account in the Integrations panel to upload files.",
+              variant: "destructive",
+            });
+            throw new Error(result.message);
           }
+          
+          if (response.ok) uploadedCount++;
         } catch (err: any) {
-          errors.push(`Image ${i + 1}: ${err.message}`);
+          console.error(`Image ${i + 1} upload failed:`, err.message);
         }
       }
 
@@ -324,20 +295,15 @@ export default function ImageUploadForm() {
           title: "Upload Successful",
           description: `${uploadedCount} of ${capturedImages.length} image(s) uploaded to Google Drive`,
         });
-        
-        // Clear images after successful upload
         setCapturedImages([]);
-        
         setGdriveSuccess(true);
         setTimeout(() => {
           setGdriveSuccess(false);
         }, 2000);
-      }
-      
-      if (errors.length > 0) {
+      } else if (uploadedCount === 0) {
         toast({
-          title: "Some Uploads Failed",
-          description: errors.join(', '),
+          title: "Upload Failed",
+          description: "Could not upload any images. Please check your connection and try again.",
           variant: "destructive",
         });
       }
