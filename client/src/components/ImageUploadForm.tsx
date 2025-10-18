@@ -365,7 +365,7 @@ export default function ImageUploadForm() {
       if (result.success) {
         toast({
           title: isAutoCheck ? "Auto-Update Successful!" : "Excel Data Updated!",
-          description: `Updated from Google Drive file: ${result.fileDate}.xlsx`,
+          description: `Updated from Google Drive file: ${result.originalFileName}`,
         });
         
         // Reload the page after a short delay so the toast is visible

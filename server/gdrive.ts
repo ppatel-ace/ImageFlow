@@ -151,6 +151,7 @@ export interface ExcelCheckResult {
   message: string;
   fileName?: string;
   fileDate?: string;
+  originalFileName?: string;
   error?: string;
 }
 
@@ -238,7 +239,8 @@ export async function checkForNewExcelFile(): Promise<ExcelCheckResult> {
       success: true,
       message: `Excel file ${originalFileName} successfully downloaded and saved`,
       fileName: newFileName,
-      fileDate: formattedDate
+      fileDate: formattedDate,
+      originalFileName: originalFileName
     };
 
   } catch (error: any) {
