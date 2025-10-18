@@ -31,8 +31,8 @@ Preferred communication style: Simple, everyday language.
 **Form Management**
 - React Hook Form for performant form state management
 - Zod schema validation integrated via @hookform/resolvers
-- Local storage persistence for form data (part numbers, customer names, work orders, dept, and rev values)
-- Real-time localStorage sync: Dept and Rev fields save automatically on change (not just on submit)
+- Local storage persistence for user-entered fields: Dept and Work Order Number
+- Real-time localStorage sync: Dept field saves automatically on change
 - Work Order autocomplete: Supports both manual typing AND dropdown selection from Excel-loaded work orders
   - Popover + Command component for instant dropdown on focus/typing
   - Real-time filtering as user types

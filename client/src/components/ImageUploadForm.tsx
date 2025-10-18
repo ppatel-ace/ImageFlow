@@ -51,6 +51,13 @@ export default function ImageUploadForm() {
   const [lastManualCheck, setLastManualCheck] = useState<string | null>(null);
   const { toast } = useToast();
 
+  // Clear old localStorage entries that are no longer used (auto-filled fields)
+  useEffect(() => {
+    localStorage.removeItem("lastPartNumber");
+    localStorage.removeItem("lastRev");
+    localStorage.removeItem("lastCustomerName");
+  }, []);
+
   // Fetch all work orders
   const { data: workOrders = [] } = useQuery<string[]>({
     queryKey: ['/api/work-orders'],
@@ -58,18 +65,15 @@ export default function ImageUploadForm() {
   });
 
   const lastDept = localStorage.getItem("lastDept") || "";
-  const lastPartNumber = localStorage.getItem("lastPartNumber") || "";
-  const lastRev = localStorage.getItem("lastRev") || "";
-  const lastCustomerName = localStorage.getItem("lastCustomerName") || "";
   const lastWorkOrderNumber = localStorage.getItem("lastWorkOrderNumber") || "";
 
   const form = useForm<UploadFormData>({
     resolver: zodResolver(uploadFormSchema),
     defaultValues: {
       dept: lastDept,
-      partNumber: lastPartNumber,
-      rev: lastRev,
-      customerName: lastCustomerName,
+      partNumber: "",
+      rev: "",
+      customerName: "",
       workOrderNumber: lastWorkOrderNumber,
     },
   });
@@ -148,12 +152,6 @@ export default function ImageUploadForm() {
       localStorage.setItem("lastDept", dept);
     }
   }, [dept]);
-
-  useEffect(() => {
-    if (rev) {
-      localStorage.setItem("lastRev", rev);
-    }
-  }, [rev]);
 
   // Sync workOrderSearch with form value
   useEffect(() => {
