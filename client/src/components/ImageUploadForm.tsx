@@ -228,7 +228,7 @@ export default function ImageUploadForm() {
         // Save all captured images
         for (let i = 0; i < capturedImages.length; i++) {
           const image = capturedImages[i];
-          const timestamp = format(new Date(), "yyyyMMdd-HHmmss");
+          const timestamp = format(new Date(), "yyyyMMdd-HHmmss-SSS");
           const extension = image.file.name.split('.').pop() || 'jpg';
           const filename = `${sanitizedPartNumber}Rev${sanitizedRev}-${timestamp}-${i + 1}.${extension}`;
           
@@ -250,7 +250,7 @@ export default function ImageUploadForm() {
         // Fallback: simple download for each file
         for (let i = 0; i < capturedImages.length; i++) {
           const image = capturedImages[i];
-          const timestamp = format(new Date(), "yyyyMMdd-HHmmss");
+          const timestamp = format(new Date(), "yyyyMMdd-HHmmss-SSS");
           const extension = image.file.name.split('.').pop() || 'jpg';
           const filename = `${sanitizedPartNumber}Rev${sanitizedRev}-${timestamp}-${i + 1}.${extension}`;
           
@@ -313,7 +313,7 @@ export default function ImageUploadForm() {
       // Upload each image sequentially
       for (let i = 0; i < capturedImages.length; i++) {
         const image = capturedImages[i];
-        const timestamp = format(new Date(), "yyyyMMdd-HHmmss");
+        const timestamp = format(new Date(), "yyyyMMdd-HHmmss-SSS");
         const imageName = `${sanitizedPartNumber}Rev${sanitizedRev}-${timestamp}-${i + 1}`;
         
         const formData = new FormData();
@@ -890,7 +890,7 @@ export default function ImageUploadForm() {
               </div>
               {partNumber && rev && (
                 <p className="text-sm font-medium text-foreground" data-testid="text-generated-name">
-                  Files will be named: {partNumber}Rev{rev}-{format(new Date(), "yyyyMMdd-HHmmss")}-[1-{capturedImages.length}]
+                  Files will be named: {partNumber}Rev{rev}-{format(new Date(), "yyyyMMdd-HHmmss-SSS")}-[1-{capturedImages.length}]
                 </p>
               )}
             </div>

@@ -101,7 +101,8 @@ Preferred communication style: Simple, everyday language.
   - "Clear All" button removes all captured images at once
   - Upload/Save buttons disabled until at least one image is captured
 - Image gallery UI with thumbnail previews for quality confirmation
-- Automatic file naming format: {partNumber}Rev{rev}-{timestamp}-{index}.{extension} (e.g., ABC123RevA-20250108-151500-1.jpg)
+- Automatic file naming format: {partNumber}Rev{rev}-{timestamp}-{index}.{extension} (e.g., ABC123RevA-20250108-151500-123-1.jpg)
+  - Timestamp includes milliseconds to prevent file name conflicts
   - Multiple images numbered sequentially: -1, -2, -3, etc.
 - Folder structure: ACE/CustomerName/Dept/WorkOrderNumber
 - Path and filename sanitization: Invalid characters (< > : " / \ | ? *) replaced with "_"
