@@ -230,7 +230,7 @@ export default function ImageUploadForm() {
           const image = capturedImages[i];
           const timestamp = format(new Date(), "yyyyMMdd-HHmmss-SSS");
           const extension = image.file.name.split('.').pop() || 'jpg';
-          const filename = `${sanitizedPartNumber}Rev${sanitizedRev}-${timestamp}-${i + 1}.${extension}`;
+          const filename = `${sanitizedPartNumber}Rev${sanitizedRev}-${timestamp}.${extension}`;
           
           // Create and write the file
           const fileHandle = await workOrderFolderHandle.getFileHandle(filename, { create: true });
@@ -252,7 +252,7 @@ export default function ImageUploadForm() {
           const image = capturedImages[i];
           const timestamp = format(new Date(), "yyyyMMdd-HHmmss-SSS");
           const extension = image.file.name.split('.').pop() || 'jpg';
-          const filename = `${sanitizedPartNumber}Rev${sanitizedRev}-${timestamp}-${i + 1}.${extension}`;
+          const filename = `${sanitizedPartNumber}Rev${sanitizedRev}-${timestamp}.${extension}`;
           
           const url = URL.createObjectURL(image.file);
           const a = document.createElement('a');
@@ -314,7 +314,7 @@ export default function ImageUploadForm() {
       for (let i = 0; i < capturedImages.length; i++) {
         const image = capturedImages[i];
         const timestamp = format(new Date(), "yyyyMMdd-HHmmss-SSS");
-        const imageName = `${sanitizedPartNumber}Rev${sanitizedRev}-${timestamp}-${i + 1}`;
+        const imageName = `${sanitizedPartNumber}Rev${sanitizedRev}-${timestamp}`;
         
         const formData = new FormData();
         formData.append("imageFile", image.file);
@@ -890,7 +890,7 @@ export default function ImageUploadForm() {
               </div>
               {partNumber && rev && (
                 <p className="text-sm font-medium text-foreground" data-testid="text-generated-name">
-                  Files will be named: {partNumber}Rev{rev}-{format(new Date(), "yyyyMMdd-HHmmss-SSS")}-[1-{capturedImages.length}]
+                  Example filename: {partNumber}Rev{rev}-{format(new Date(), "yyyyMMdd-HHmmss-SSS")}.jpg
                 </p>
               )}
             </div>
