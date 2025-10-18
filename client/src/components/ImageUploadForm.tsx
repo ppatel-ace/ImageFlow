@@ -78,17 +78,35 @@ export default function ImageUploadForm() {
     },
   });
 
-  // Watch dept and rev fields and save to localStorage when they change
-  const dept = form.watch("dept");
-  const rev = form.watch("rev");
-  const workOrderNumber = form.watch("workOrderNumber");
-
-  // Track previous work order to detect changes
+  // Watch all form fields efficiently
+  const { dept, rev, workOrderNumber, partNumber, customerName } = form.watch();
   const [prevWorkOrder, setPrevWorkOrder] = useState(workOrderNumber);
 
-  // Fetch part numbers and clear dependent fields when work order changes
+  // Auto-populate part number fields from selection
+  const handlePartNumberSelect = (index: number) => {
+    const selectedPart = partNumberOptions[index];
+    if (selectedPart) {
+      setPartNumberSearch(selectedPart.partNumber);
+      form.setValue("partNumber", selectedPart.partNumber);
+      form.setValue("rev", selectedPart.rev || "");
+      form.setValue("customerName", selectedPart.customerName || "");
+      setPartNumberOpen(false);
+    }
+  };
+
+  // Save dept to localStorage
   useEffect(() => {
-    // Clear dependent fields when work order changes
+    if (dept) localStorage.setItem("lastDept", dept);
+  }, [dept]);
+
+  // Sync search fields with form values
+  useEffect(() => {
+    setWorkOrderSearch(workOrderNumber);
+    setPartNumberSearch(partNumber);
+  }, [workOrderNumber, partNumber]);
+
+  // Fetch part numbers when work order changes
+  useEffect(() => {
     if (workOrderNumber !== prevWorkOrder) {
       form.setValue("partNumber", "");
       form.setValue("rev", "");
@@ -96,73 +114,25 @@ export default function ImageUploadForm() {
       setPrevWorkOrder(workOrderNumber);
     }
 
-    const fetchPartNumbers = async () => {
-      if (workOrderNumber) {
-        try {
-          const response = await fetch(`/api/part-numbers/${encodeURIComponent(workOrderNumber)}`);
-          if (response.ok) {
-            const data = await response.json();
-            setPartNumberOptions(data);
-            
-            // Auto-select if there's only one part number option
-            if (data.length === 1) {
-              const selectedPart = data[0];
-              form.setValue("partNumber", selectedPart.partNumber);
-              setPartNumberSearch(selectedPart.partNumber);
-              if (selectedPart.rev) {
-                form.setValue("rev", selectedPart.rev);
-              }
-              if (selectedPart.customerName) {
-                form.setValue("customerName", selectedPart.customerName);
-              }
-            }
-          } else {
-            setPartNumberOptions([]);
-          }
-        } catch (error) {
-          console.error("Error fetching part numbers:", error);
-          setPartNumberOptions([]);
+    if (!workOrderNumber) {
+      setPartNumberOptions([]);
+      return;
+    }
+
+    fetch(`/api/part-numbers/${encodeURIComponent(workOrderNumber)}`)
+      .then(res => res.ok ? res.json() : [])
+      .then(data => {
+        setPartNumberOptions(data);
+        if (data.length === 1) {
+          const part = data[0];
+          form.setValue("partNumber", part.partNumber);
+          form.setValue("rev", part.rev || "");
+          form.setValue("customerName", part.customerName || "");
+          setPartNumberSearch(part.partNumber);
         }
-      } else {
-        setPartNumberOptions([]);
-      }
-    };
-
-    fetchPartNumbers();
+      })
+      .catch(() => setPartNumberOptions([]));
   }, [workOrderNumber, prevWorkOrder, form]);
-
-  // Auto-populate rev and customer name when part number is selected
-  const handlePartNumberSelect = (index: number) => {
-    const selectedPart = partNumberOptions[index];
-    if (selectedPart) {
-      setPartNumberSearch(selectedPart.partNumber);
-      form.setValue("partNumber", selectedPart.partNumber);
-      if (selectedPart.rev) {
-        form.setValue("rev", selectedPart.rev);
-      }
-      if (selectedPart.customerName) {
-        form.setValue("customerName", selectedPart.customerName);
-      }
-      setPartNumberOpen(false);
-    }
-  };
-
-  useEffect(() => {
-    if (dept) {
-      localStorage.setItem("lastDept", dept);
-    }
-  }, [dept]);
-
-  // Sync workOrderSearch with form value
-  useEffect(() => {
-    setWorkOrderSearch(workOrderNumber);
-  }, [workOrderNumber]);
-
-  // Sync partNumberSearch with form value
-  useEffect(() => {
-    const partNumber = form.watch("partNumber");
-    setPartNumberSearch(partNumber);
-  }, [form.watch("partNumber")]);
 
   const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
@@ -547,9 +517,6 @@ export default function ImageUploadForm() {
 
     return () => clearInterval(interval);
   }, []);
-
-  const customerName = form.watch("customerName");
-  const partNumber = form.watch("partNumber");
 
   // Check if work order matches the list (normalize trailing zeros for comparison)
   const normalizeWorkOrder = (wo: string) => {
