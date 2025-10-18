@@ -26,14 +26,18 @@ const uploadFormSchema = z.object({
   rev: z.string().min(1, "Rev. is required"),
   customerName: z.string().min(1, "Customer name is required"),
   workOrderNumber: z.string().min(1, "Work Order # is required"),
-  imageFile: z.any().refine((file) => file instanceof File, "Image file is required"),
 });
 
 type UploadFormData = z.infer<typeof uploadFormSchema>;
 
+interface CapturedImage {
+  file: File;
+  preview: string;
+  id: string;
+}
+
 export default function ImageUploadForm() {
-  const [imagePreview, setImagePreview] = useState<string | null>(null);
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [capturedImages, setCapturedImages] = useState<CapturedImage[]>([]);
   const [isSavingLocal, setIsSavingLocal] = useState(false);
   const [isUploadingGdrive, setIsUploadingGdrive] = useState(false);
   const [gdriveSuccess, setGdriveSuccess] = useState(false);
@@ -163,25 +167,37 @@ export default function ImageUploadForm() {
   }, [form.watch("partNumber")]);
 
   const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      setSelectedFile(file);
-      form.setValue("imageFile", file);
+    const files = e.target.files;
+    if (files && files.length > 0) {
+      // Process each selected file
+      Array.from(files).forEach((file) => {
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          const newImage: CapturedImage = {
+            file: file,
+            preview: reader.result as string,
+            id: `${Date.now()}-${Math.random()}`
+          };
+          setCapturedImages(prev => [...prev, newImage]);
+        };
+        reader.readAsDataURL(file);
+      });
       
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setImagePreview(reader.result as string);
-      };
-      reader.readAsDataURL(file);
+      // Reset input value so same file can be selected again
+      e.target.value = '';
     }
+  };
+
+  const removeImage = (imageId: string) => {
+    setCapturedImages(prev => prev.filter(img => img.id !== imageId));
   };
 
 
   const handleSaveLocally = async () => {
-    if (!selectedFile || !dept || !customerName || !workOrderNumber || !partNumber) {
+    if (capturedImages.length === 0 || !dept || !customerName || !workOrderNumber || !partNumber) {
       toast({
         title: "Missing Information",
-        description: "Please fill in all fields and select an image before saving.",
+        description: "Please fill in all fields and capture at least one image before saving.",
         variant: "destructive",
       });
       return;
@@ -211,40 +227,52 @@ export default function ImageUploadForm() {
         // Create or get work order folder inside dept folder
         const workOrderFolderHandle = await deptFolderHandle.getDirectoryHandle(workOrderNumber, { create: true });
         
-        // Generate filename with timestamp
-        const timestamp = format(new Date(), "yyyyMMdd-HHmmss");
-        const extension = selectedFile.name.split('.').pop() || 'jpg';
-        const filename = `${sanitizedPartNumber}Rev${sanitizedRev}-${timestamp}.${extension}`;
-        
-        // Create and write the file
-        const fileHandle = await workOrderFolderHandle.getFileHandle(filename, { create: true });
-        const writable = await fileHandle.createWritable();
-        await writable.write(selectedFile);
-        await writable.close();
+        // Save all captured images
+        for (let i = 0; i < capturedImages.length; i++) {
+          const image = capturedImages[i];
+          const timestamp = format(new Date(), "yyyyMMdd-HHmmss");
+          const extension = image.file.name.split('.').pop() || 'jpg';
+          const filename = `${sanitizedPartNumber}Rev${sanitizedRev}-${timestamp}-${i + 1}.${extension}`;
+          
+          // Create and write the file
+          const fileHandle = await workOrderFolderHandle.getFileHandle(filename, { create: true });
+          const writable = await fileHandle.createWritable();
+          await writable.write(image.file);
+          await writable.close();
+        }
         
         toast({
           title: "Saved Successfully",
-          description: `Image saved to ACE/${sanitizedCustomerName}/${dept}/${workOrderNumber}/${filename}`,
+          description: `${capturedImages.length} image(s) saved to ACE/${sanitizedCustomerName}/${dept}/${workOrderNumber}/`,
         });
-      } else {
-        // Fallback: simple download with suggested path in filename
-        const timestamp = format(new Date(), "yyyyMMdd-HHmmss");
-        const extension = selectedFile.name.split('.').pop() || 'jpg';
-        const filename = `${sanitizedPartNumber}Rev${sanitizedRev}-${timestamp}.${extension}`;
         
-        const url = URL.createObjectURL(selectedFile);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = filename;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
+        // Clear captured images after successful save
+        setCapturedImages([]);
+      } else {
+        // Fallback: simple download for each file
+        for (let i = 0; i < capturedImages.length; i++) {
+          const image = capturedImages[i];
+          const timestamp = format(new Date(), "yyyyMMdd-HHmmss");
+          const extension = image.file.name.split('.').pop() || 'jpg';
+          const filename = `${sanitizedPartNumber}Rev${sanitizedRev}-${timestamp}-${i + 1}.${extension}`;
+          
+          const url = URL.createObjectURL(image.file);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = filename;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+        }
         
         toast({
           title: "Download Started",
-          description: `Please create folders: ACE/${sanitizedCustomerName}/${dept}/${workOrderNumber}/ and move the file there.`,
+          description: `${capturedImages.length} image(s) downloaded. Please create folders: ACE/${sanitizedCustomerName}/${dept}/${workOrderNumber}/ and move the files there.`,
         });
+        
+        // Clear captured images after successful download
+        setCapturedImages([]);
       }
     } catch (error) {
       if ((error as Error).name === 'AbortError') {
@@ -267,10 +295,10 @@ export default function ImageUploadForm() {
   };
 
   const handleGdriveUpload = async () => {
-    if (!selectedFile || !dept || !customerName || !workOrderNumber || !partNumber) {
+    if (capturedImages.length === 0 || !dept || !customerName || !workOrderNumber || !partNumber) {
       toast({
         title: "Missing Information",
-        description: "Please fill in all fields and select an image before uploading.",
+        description: "Please fill in all fields and capture at least one image before uploading.",
         variant: "destructive",
       });
       return;
@@ -278,46 +306,73 @@ export default function ImageUploadForm() {
 
     setIsUploadingGdrive(true);
     try {
-      const timestamp = format(new Date(), "yyyyMMdd-HHmmss");
       const sanitizedPartNumber = sanitizePath(partNumber);
       const sanitizedRev = sanitizePath(form.watch("rev"));
-      const imageName = `${sanitizedPartNumber}Rev${sanitizedRev}-${timestamp}`;
       
-      const formData = new FormData();
-      formData.append("imageFile", selectedFile);
-      formData.append("customerName", customerName);
-      formData.append("dept", dept);
-      formData.append("workOrderNumber", workOrderNumber);
-      formData.append("imageName", imageName);
+      let uploadedCount = 0;
+      const errors: string[] = [];
+      
+      // Upload each image sequentially
+      for (let i = 0; i < capturedImages.length; i++) {
+        const image = capturedImages[i];
+        const timestamp = format(new Date(), "yyyyMMdd-HHmmss");
+        const imageName = `${sanitizedPartNumber}Rev${sanitizedRev}-${timestamp}-${i + 1}`;
+        
+        const formData = new FormData();
+        formData.append("imageFile", image.file);
+        formData.append("customerName", customerName);
+        formData.append("dept", dept);
+        formData.append("workOrderNumber", workOrderNumber);
+        formData.append("imageName", imageName);
 
-      const response = await fetch("/api/upload/gdrive", {
-        method: "POST",
-        body: formData,
-      });
-
-      const result = await response.json();
-
-      if (!response.ok) {
-        if (result.requiresAuth) {
-          toast({
-            title: "Google Drive Not Connected",
-            description: "Please connect your Google Drive account in the Integrations panel to upload files.",
-            variant: "destructive",
+        try {
+          const response = await fetch("/api/upload/gdrive", {
+            method: "POST",
+            body: formData,
           });
-          throw new Error(result.message);
+
+          const result = await response.json();
+
+          if (!response.ok) {
+            if (result.requiresAuth) {
+              toast({
+                title: "Google Drive Not Connected",
+                description: "Please connect your Google Drive account in the Integrations panel to upload files.",
+                variant: "destructive",
+              });
+              throw new Error(result.message);
+            }
+            errors.push(`Image ${i + 1}: ${result.error || "Upload failed"}`);
+          } else {
+            uploadedCount++;
+          }
+        } catch (err: any) {
+          errors.push(`Image ${i + 1}: ${err.message}`);
         }
-        throw new Error(result.error || "Upload failed");
       }
 
-      toast({
-        title: "Upload Successful",
-        description: `Image saved to Google Drive: ${result.path}`,
-      });
-
-      setGdriveSuccess(true);
-      setTimeout(() => {
-        setGdriveSuccess(false);
-      }, 2000);
+      if (uploadedCount > 0) {
+        toast({
+          title: "Upload Successful",
+          description: `${uploadedCount} of ${capturedImages.length} image(s) uploaded to Google Drive`,
+        });
+        
+        // Clear images after successful upload
+        setCapturedImages([]);
+        
+        setGdriveSuccess(true);
+        setTimeout(() => {
+          setGdriveSuccess(false);
+        }, 2000);
+      }
+      
+      if (errors.length > 0) {
+        toast({
+          title: "Some Uploads Failed",
+          description: errors.join(', '),
+          variant: "destructive",
+        });
+      }
     } catch (error: any) {
       console.error("Google Drive upload error:", error);
       if (!error.message.includes('not connected')) {
@@ -793,31 +848,52 @@ export default function ImageUploadForm() {
                   Choose Image
                 </Button>
               </div>
-              {form.formState.errors.imageFile && (
-                <p className="text-sm text-destructive">{form.formState.errors.imageFile.message as string}</p>
-              )}
             </div>
           </div>
         </Card>
 
-        {imagePreview && (
+        {capturedImages.length > 0 && (
           <Card className="p-4 sm:p-6">
             <div className="space-y-3 sm:space-y-4">
-              <h3 className="text-base sm:text-lg font-medium">Image Preview</h3>
-              <div className="relative aspect-video bg-muted rounded-lg overflow-hidden">
-                <img src={imagePreview} alt="Preview" className="w-full h-full object-contain" />
+              <div className="flex items-center justify-between">
+                <h3 className="text-base sm:text-lg font-medium">Captured Images ({capturedImages.length})</h3>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setCapturedImages([])}
+                  data-testid="button-clear-all-images"
+                >
+                  Clear All
+                </Button>
               </div>
-              {selectedFile && (
-                <div className="space-y-1">
-                  {partNumber && rev && (
-                    <p className="text-sm font-medium text-foreground" data-testid="text-generated-name">
-                      Generated name: {partNumber}Rev{rev}-{format(new Date(), "yyyyMMdd-HHmmss")}
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                {capturedImages.map((image, index) => (
+                  <div key={image.id} className="relative group">
+                    <div className="relative aspect-square bg-muted rounded-lg overflow-hidden">
+                      <img src={image.preview} alt={`Captured ${index + 1}`} className="w-full h-full object-cover" />
+                      <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                        <Button
+                          type="button"
+                          variant="destructive"
+                          size="sm"
+                          onClick={() => removeImage(image.id)}
+                          data-testid={`button-remove-image-${index}`}
+                        >
+                          Remove
+                        </Button>
+                      </div>
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-1 truncate">
+                      {image.file.name} ({(image.file.size / 1024).toFixed(1)} KB)
                     </p>
-                  )}
-                  <p className="text-sm text-muted-foreground" data-testid="text-filename">
-                    Original: {selectedFile.name} ({(selectedFile.size / 1024).toFixed(1)} KB)
-                  </p>
-                </div>
+                  </div>
+                ))}
+              </div>
+              {partNumber && rev && (
+                <p className="text-sm font-medium text-foreground" data-testid="text-generated-name">
+                  Files will be named: {partNumber}Rev{rev}-{format(new Date(), "yyyyMMdd-HHmmss")}-[1-{capturedImages.length}]
+                </p>
               )}
             </div>
           </Card>
@@ -850,8 +926,7 @@ export default function ImageUploadForm() {
                 rev: "",
                 customerName: "",
               });
-              setImagePreview(null);
-              setSelectedFile(null);
+              setCapturedImages([]);
             }}
             disabled={isSavingLocal || isUploadingGdrive}
             data-testid="button-clear"
@@ -864,7 +939,7 @@ export default function ImageUploadForm() {
             size="lg"
             className="w-full sm:flex-1 min-h-12 sm:min-h-14"
             onClick={handleSaveLocally}
-            disabled={isSavingLocal || isUploadingGdrive || !selectedFile || !workOrderMatches}
+            disabled={isSavingLocal || isUploadingGdrive || capturedImages.length === 0 || !workOrderMatches}
             data-testid="button-save-local"
           >
             {isSavingLocal ? (
@@ -886,7 +961,7 @@ export default function ImageUploadForm() {
           size="lg"
           className="w-full min-h-12 sm:min-h-14"
           onClick={handleGdriveUpload}
-          disabled={isSavingLocal || isUploadingGdrive || !selectedFile || !workOrderMatches}
+          disabled={isSavingLocal || isUploadingGdrive || capturedImages.length === 0 || !workOrderMatches}
           data-testid="button-upload-gdrive"
         >
           {isUploadingGdrive ? (
