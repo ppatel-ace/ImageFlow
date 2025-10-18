@@ -255,10 +255,10 @@ export default function ImageUploadForm() {
     try {
       let uploadedCount = 0;
       
-      for (let i = 0; i < capturedImages.length; i++) {
-        const image = capturedImages[i];
-        const timestamp = format(new Date(), "yyyyMMdd-HHmmss-SSS");
-        const imageName = `${sanitizePath(partNumber)}Rev${sanitizePath(rev)}-${timestamp}`;
+      for (const [index, image] of capturedImages.entries()) {
+        const ext = image.file.name.split('.').pop() || 'jpg';
+        const filename = generateFilename(ext);
+        const imageName = filename.substring(0, filename.lastIndexOf('.')); // Remove extension for API
         
         const formData = new FormData();
         formData.append("imageFile", image.file);
@@ -286,7 +286,7 @@ export default function ImageUploadForm() {
           
           if (response.ok) uploadedCount++;
         } catch (err: any) {
-          console.error(`Image ${i + 1} upload failed:`, err.message);
+          console.error(`Image ${index + 1} upload failed:`, err.message);
         }
       }
 
@@ -552,7 +552,7 @@ export default function ImageUploadForm() {
                 Dept <span className="text-destructive">*</span>
               </Label>
               <Select
-                value={form.watch("dept")}
+                value={dept}
                 onValueChange={(value) => form.setValue("dept", value)}
               >
                 <SelectTrigger className="min-h-12 sm:min-h-14 text-base" data-testid="select-dept">
@@ -600,7 +600,7 @@ export default function ImageUploadForm() {
                           key={wo}
                           className={cn(
                             "px-3 py-2 cursor-pointer hover-elevate text-sm font-mono flex items-center",
-                            form.watch("workOrderNumber") === wo && "bg-accent"
+                            workOrderNumber === wo && "bg-accent"
                           )}
                           onMouseDown={(e) => {
                             e.preventDefault(); // Prevent input blur
@@ -612,7 +612,7 @@ export default function ImageUploadForm() {
                           <Check
                             className={cn(
                               "mr-2 h-4 w-4",
-                              form.watch("workOrderNumber") === wo ? "opacity-100" : "opacity-0"
+                              workOrderNumber === wo ? "opacity-100" : "opacity-0"
                             )}
                           />
                           {wo}
@@ -665,9 +665,9 @@ export default function ImageUploadForm() {
                           key={`${part.partNumber}-${index}`}
                           className={cn(
                             "px-3 py-2 cursor-pointer hover-elevate text-sm font-mono flex items-center",
-                            form.watch("partNumber") === part.partNumber && 
-                            form.watch("rev") === part.rev && 
-                            form.watch("customerName") === part.customerName && "bg-accent"
+                            partNumber === part.partNumber && 
+                            rev === part.rev && 
+                            customerName === part.customerName && "bg-accent"
                           )}
                           onMouseDown={(e) => {
                             e.preventDefault(); // Prevent input blur
@@ -677,9 +677,9 @@ export default function ImageUploadForm() {
                           <Check
                             className={cn(
                               "mr-2 h-4 w-4",
-                              form.watch("partNumber") === part.partNumber && 
-                              form.watch("rev") === part.rev && 
-                              form.watch("customerName") === part.customerName ? "opacity-100" : "opacity-0"
+                              partNumber === part.partNumber && 
+                              rev === part.rev && 
+                              customerName === part.customerName ? "opacity-100" : "opacity-0"
                             )}
                           />
                           {part.partNumber}
