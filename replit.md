@@ -4,6 +4,8 @@
 
 This is a work order management application designed for Android tablets that enables users to capture and upload images to Google Drive with automatic folder organization. The app allows users to associate images with specific customers and work orders, creating an organized file structure. Built with a modern React frontend and Express backend, the application emphasizes touch-friendly interactions optimized for tablet use.
 
+**Multiple Photo Capture**: Users can now capture multiple photos before uploading. Photos are displayed in a gallery with thumbnails, and users can remove individual images or clear all at once before proceeding with upload/save operations.
+
 ## User Preferences
 
 Preferred communication style: Simple, everyday language.
@@ -91,8 +93,16 @@ Preferred communication style: Simple, everyday language.
 
 **Image Upload Flow**
 - Camera input prioritized for direct capture on tablet devices
-- Image preview before upload for quality confirmation
-- Automatic file naming format: {partNumber}Rev{rev}-{timestamp}.{extension} (e.g., ABC123RevA-20250108-151500.jpg)
+- **Multiple photo capture**: Users can take/select multiple photos before uploading
+  - Images stored in `capturedImages` array with `{ id, file, preview }` structure
+  - Each image has unique ID generated with `Date.now() + Math.random()`
+  - Gallery displays thumbnails in 2-column grid (mobile) or 3-column grid (tablet/desktop)
+  - Individual image removal via hover overlay with remove button
+  - "Clear All" button removes all captured images at once
+  - Upload/Save buttons disabled until at least one image is captured
+- Image gallery UI with thumbnail previews for quality confirmation
+- Automatic file naming format: {partNumber}Rev{rev}-{timestamp}-{index}.{extension} (e.g., ABC123RevA-20250108-151500-1.jpg)
+  - Multiple images numbered sequentially: -1, -2, -3, etc.
 - Folder structure: ACE/CustomerName/Dept/WorkOrderNumber
 - Path and filename sanitization: Invalid characters (< > : " / \ | ? *) replaced with "_"
   - Applied to Customer Name in folder paths (server/sharepoint.ts, client)
@@ -100,6 +110,7 @@ Preferred communication style: Simple, everyday language.
   - Sanitization occurs in Google Drive uploads, SharePoint uploads, and local file saves
   - Original values preserved in UI and form data for display
 - Local save option for offline scenarios or backup purposes
+- Both local save and Google Drive upload process all captured images sequentially
 
 **Excel Data Updates via Google Drive**
 - Automatic Excel file updates from Google Drive KSAlert folder
