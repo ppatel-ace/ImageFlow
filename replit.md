@@ -127,10 +127,10 @@ Preferred communication style: Simple, everyday language.
 - File naming pattern: YYYYMMDD.xlsx (e.g., 20250117.xlsx)
 - **Automatic Updates**:
   - Auto-check on page load (once per day, tracked via lastPageLoadCheck)
-  - Scheduled check at 7:03 AM EST/EDT daily (tracked via lastScheduledCheck)
+  - Scheduled check at 7:20 AM EST/EDT daily (tracked via lastScheduledCheck)
   - Both checks can run on the same day without interfering with each other
   - Uses Intl.DateTimeFormat with America/New_York timezone for accurate EST/EDT handling
-  - Scheduled check fires at exactly 7:03 AM Eastern time regardless of user's local timezone
+  - Scheduled check fires at exactly 7:20 AM Eastern time regardless of user's local timezone
   - Date comparisons for scheduled checks use Eastern timezone to prevent skipped runs
   - Silent auto-checks (no toast notifications if no updates found)
   - lastAutoCheckDate tracks most recent auto-check for UI display

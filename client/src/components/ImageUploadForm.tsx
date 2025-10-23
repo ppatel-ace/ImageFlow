@@ -424,7 +424,7 @@ export default function ImageUploadForm() {
     performAutoCheck();
   }, []); // Run once on mount
 
-  // Scheduled check at 7:03 AM EST/EDT daily
+  // Scheduled check at 7:20 AM EST/EDT daily
   useEffect(() => {
 
     const getEasternDateString = (date: Date): string => {
@@ -456,8 +456,8 @@ export default function ImageUploadForm() {
       const hours = parseInt(timeParts.find(p => p.type === "hour")?.value || "0");
       const minutes = parseInt(timeParts.find(p => p.type === "minute")?.value || "0");
       
-      // Check if it's 7:03 AM EST/EDT
-      if (hours === 7 && minutes === 3) {
+      // Check if it's 7:20 AM EST/EDT
+      if (hours === 7 && minutes === 20) {
         const lastScheduledCheckDate = localStorage.getItem("lastScheduledCheck");
         
         // Only check if we haven't done the scheduled check today (in Eastern timezone)
@@ -528,7 +528,7 @@ export default function ImageUploadForm() {
           <div className="text-xs text-muted-foreground text-center">
             <p className="flex items-center gap-1 justify-center">
               <Check className="w-3 h-3 text-green-600" />
-              Google Drive KSAlert folder - Auto-updates: Daily at 7:03 AM EST & on page load
+              Google Drive KSAlert folder - Auto-updates: Daily at 7:20 AM EST & on page load
             </p>
             {lastAutoCheck && (
               <p className="text-xs">
