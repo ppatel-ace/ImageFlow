@@ -173,10 +173,18 @@ export default function ImageUploadForm() {
   };
 
   const handleTakePhotoClick = () => {
+    // Debug: Log device detection
+    const userAgent = navigator.userAgent;
+    const isAndroidDevice = shouldUseCustomCamera();
+    console.log('User Agent:', userAgent);
+    console.log('Should use custom camera:', isAndroidDevice);
+    
     // Use custom camera for Android, native camera for iOS
-    if (shouldUseCustomCamera()) {
+    if (isAndroidDevice) {
+      console.log('Opening custom camera modal...');
       setShowCustomCamera(true);
     } else {
+      console.log('Opening native camera input...');
       // Use native camera input for iOS
       document.getElementById("camera-input")?.click();
     }
