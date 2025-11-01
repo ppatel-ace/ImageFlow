@@ -68,6 +68,7 @@ Preferred communication style: Simple, everyday language.
 - Environment-based configuration: NODE_ENV determines dev vs production behavior
 - Dynamic imports prevent Vite dependencies from being bundled in production
 - Static file serving in production without Vite overhead
+- **Scheduled Tasks**: node-cron for server-side scheduled jobs (Excel updates at 7:20 AM EST/EDT daily)
 
 **Storage Layer**
 - Abstracted storage interface (IStorage) allowing multiple implementations
@@ -124,18 +125,19 @@ Preferred communication style: Simple, everyday language.
 **Excel Data Updates via Google Drive**
 - Automatic Excel file updates from Google Drive KSAlert folder
 - Folder ID: 1ixVvva0yj1FyytYBjj0DRuPNT4i76H76 (owned by aceelectronics385@gmail.com)
-- File naming pattern: YYYYMMDD.xlsx (e.g., 20250117.xlsx)
-- **Automatic Updates**:
+- File naming pattern: YYYYMMDD.xlsx (e.g., 20251101.xlsx)
+- **Server-Side Automatic Updates (Always Running)**:
+  - **Primary**: Server-side cron job runs at 7:20 AM EST/EDT daily using node-cron
+  - Runs automatically even when no one is using the app
+  - Initial update check runs 10 seconds after server startup
+  - Uses America/New_York timezone for accurate EST/EDT handling
+  - Logs all update activities to server console
+- **Client-Side Updates (When App is Open)**:
   - Auto-check on page load (once per day, tracked via lastPageLoadCheck)
-  - Scheduled check at 7:20 AM EST/EDT daily (tracked via lastScheduledCheck)
-  - Both checks can run on the same day without interfering with each other
-  - Uses Intl.DateTimeFormat with America/New_York timezone for accurate EST/EDT handling
-  - Scheduled check fires at exactly 7:20 AM Eastern time regardless of user's local timezone
-  - Date comparisons for scheduled checks use Eastern timezone to prevent skipped runs
+  - Scheduled check at 7:20 AM EST/EDT if browser is open
   - Silent auto-checks (no toast notifications if no updates found)
-  - lastAutoCheckDate tracks most recent auto-check for UI display
-  - lastManualCheck tracks timestamp of manual check button clicks
-- "Check for Updates" button in UI for manual checks (shows toast notifications)
+- **Manual Updates**:
+  - "Check for Updates" button in UI for manual checks (shows toast notifications)
 - System searches for latest file in KSAlert folder matching YYYYMMDD.xlsx pattern
 - Downloads and saves Excel file with timestamp to attached_assets folder (OpenOrdersAllQtyOnly_{timestamp}.xlsx)
 - Automatically reloads work order data from new file
