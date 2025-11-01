@@ -154,12 +154,13 @@ export default function CustomCamera({ onCapture, onClose }: CustomCameraProps) 
       {/* Hidden canvas for capturing */}
       <canvas ref={canvasRef} className="hidden" />
 
-      {/* Zoom Control - Vertical Slider on Right */}
-      {hasZoomSupport && (
-        <div className="absolute right-4 top-1/2 -translate-y-1/2 z-10">
-          <Card className="p-3 bg-black/60 border-white/20">
-            <div className="flex flex-col items-center gap-3">
-              <span className="text-white text-xs font-medium">Zoom</span>
+      {/* Zoom Control - Vertical on Right Side */}
+      <div className="absolute right-2 top-1/4 z-20">
+        <div className="bg-black/80 rounded-lg p-4 border-2 border-white/40">
+          <div className="flex flex-col items-center gap-2">
+            <span className="text-white text-sm font-bold">Zoom</span>
+            <div className="flex flex-col items-center gap-1">
+              <span className="text-white text-xs">3x</span>
               <input
                 type="range"
                 min="1"
@@ -167,26 +168,25 @@ export default function CustomCamera({ onCapture, onClose }: CustomCameraProps) 
                 step="0.1"
                 value={zoom}
                 onChange={(e) => handleZoomChange(parseFloat(e.target.value))}
-                className="vertical-slider h-40 cursor-pointer"
+                className="h-48 cursor-pointer"
                 style={{
                   WebkitAppearance: 'slider-vertical',
-                  width: '8px',
-                  transform: 'rotate(-90deg)',
-                  transformOrigin: 'center'
+                  width: '30px'
                 } as React.CSSProperties}
                 data-testid="slider-zoom"
               />
-              <span className="text-white text-xs">{zoom.toFixed(1)}x</span>
+              <span className="text-white text-xs">1x</span>
             </div>
-          </Card>
+            <span className="text-white text-base font-bold">{zoom.toFixed(1)}x</span>
+          </div>
         </div>
-      )}
+      </div>
 
-      {/* Brightness Control - Horizontal Slider at Bottom */}
-      <div className="absolute bottom-24 left-0 right-0 z-10 px-8">
-        <Card className="p-4 bg-black/60 border-white/20">
-          <div className="flex items-center gap-4">
-            <span className="text-white text-sm font-medium whitespace-nowrap">Brightness</span>
+      {/* Brightness Control - Horizontal at Bottom */}
+      <div className="absolute bottom-28 left-4 right-4 z-20">
+        <div className="bg-black/80 rounded-lg p-4 border-2 border-white/40">
+          <div className="flex items-center gap-3">
+            <span className="text-white text-sm font-bold whitespace-nowrap">Brightness</span>
             <input
               type="range"
               min="50"
@@ -194,12 +194,12 @@ export default function CustomCamera({ onCapture, onClose }: CustomCameraProps) 
               step="5"
               value={brightness}
               onChange={(e) => setBrightness(parseInt(e.target.value))}
-              className="flex-1 cursor-pointer"
+              className="flex-1 h-8 cursor-pointer"
               data-testid="slider-brightness"
             />
-            <span className="text-white text-sm w-12 text-right">{brightness}%</span>
+            <span className="text-white text-base font-bold w-14 text-right">{brightness}%</span>
           </div>
-        </Card>
+        </div>
       </div>
 
       {/* Capture Button */}
