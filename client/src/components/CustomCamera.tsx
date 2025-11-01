@@ -142,9 +142,9 @@ export default function CustomCamera({ onCapture, onClose }: CustomCameraProps) 
   // Show photo confirmation screen if photo was captured
   if (capturedImage) {
     return (
-      <div className="fixed top-0 left-0 right-0 bottom-0 z-[9999] bg-black w-screen" style={{ height: '100dvh' }}>
+      <div className="fixed top-0 left-0 w-full h-full z-[9999] bg-black overflow-hidden">
         {/* Header */}
-        <div className="absolute top-0 left-0 right-0 z-10 p-4 bg-black/80 flex justify-between items-center h-16">
+        <div className="absolute top-0 left-0 right-0 z-50 p-4 bg-black flex justify-between items-center">
           <h2 className="text-white text-xl font-semibold">Photo Preview</h2>
           <Button
             variant="ghost"
@@ -160,55 +160,36 @@ export default function CustomCamera({ onCapture, onClose }: CustomCameraProps) 
           </Button>
         </div>
 
-        {/* Photo Preview - Calculated to fit between header and buttons */}
-        <div 
-          className="absolute left-0 right-0 flex items-center justify-center overflow-hidden px-4"
-          style={{ 
-            top: '64px', 
-            bottom: '100px'
-          }}
-        >
+        {/* Photo Preview - Takes up middle space */}
+        <div className="absolute top-20 left-0 right-0 bottom-48 flex items-center justify-center p-4">
           <img
             src={capturedImage}
             alt="Captured"
-            style={{ 
-              maxWidth: '100%',
-              maxHeight: '100%',
-              width: 'auto',
-              height: 'auto',
-              objectFit: 'contain'
-            }}
+            className="max-w-full max-h-full object-contain"
           />
         </div>
 
-        {/* Action Buttons - Fixed at bottom with safe area */}
-        <div 
-          className="absolute left-0 right-0 z-10 bg-black/90 flex gap-4 justify-center"
-          style={{
-            bottom: '0',
-            paddingTop: '20px',
-            paddingBottom: 'max(20px, env(safe-area-inset-bottom))',
-            paddingLeft: '24px',
-            paddingRight: '24px'
-          }}
-        >
-          <Button
-            size="lg"
-            variant="outline"
-            className="min-h-14 px-8 text-lg bg-white/10 text-white border-white/40 hover:bg-white/20"
-            onClick={handleRetake}
-            data-testid="button-retake-photo"
-          >
-            Cancel
-          </Button>
-          <Button
-            size="lg"
-            className="min-h-14 px-8 text-lg bg-blue-600 hover:bg-blue-700 text-white"
-            onClick={handleUsePhoto}
-            data-testid="button-use-photo"
-          >
-            Use this Photo
-          </Button>
+        {/* Action Buttons - Large visible bar at bottom */}
+        <div className="absolute bottom-0 left-0 right-0 z-50 bg-black border-t-4 border-white/20">
+          <div className="p-8 flex flex-col gap-4">
+            <Button
+              size="lg"
+              className="w-full min-h-16 text-xl bg-blue-600 hover:bg-blue-700 text-white"
+              onClick={handleUsePhoto}
+              data-testid="button-use-photo"
+            >
+              ✓ Use this Photo
+            </Button>
+            <Button
+              size="lg"
+              variant="outline"
+              className="w-full min-h-16 text-xl bg-white/10 text-white border-white/40 hover:bg-white/20"
+              onClick={handleRetake}
+              data-testid="button-retake-photo"
+            >
+              ✕ Cancel
+            </Button>
+          </div>
         </div>
       </div>
     );
