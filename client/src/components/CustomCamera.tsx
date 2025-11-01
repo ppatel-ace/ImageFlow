@@ -142,9 +142,9 @@ export default function CustomCamera({ onCapture, onClose }: CustomCameraProps) 
   // Show photo confirmation screen if photo was captured
   if (capturedImage) {
     return (
-      <div className="fixed inset-0 z-[9999] bg-black flex flex-col">
+      <div className="fixed inset-0 z-[9999] bg-black flex flex-col h-screen overflow-hidden">
         {/* Header */}
-        <div className="p-4 bg-black/80 flex justify-between items-center">
+        <div className="flex-shrink-0 p-4 bg-black/80 flex justify-between items-center">
           <h2 className="text-white text-xl font-semibold">Photo Preview</h2>
           <Button
             variant="ghost"
@@ -160,8 +160,8 @@ export default function CustomCamera({ onCapture, onClose }: CustomCameraProps) 
           </Button>
         </div>
 
-        {/* Photo Preview */}
-        <div className="flex-1 flex items-center justify-center p-4">
+        {/* Photo Preview - Limited height to ensure buttons are visible */}
+        <div className="flex-1 min-h-0 flex items-center justify-center p-4 overflow-hidden">
           <img
             src={capturedImage}
             alt="Captured"
@@ -169,8 +169,8 @@ export default function CustomCamera({ onCapture, onClose }: CustomCameraProps) 
           />
         </div>
 
-        {/* Action Buttons */}
-        <div className="p-6 bg-black/80 flex gap-4 justify-center">
+        {/* Action Buttons - Always visible at bottom */}
+        <div className="flex-shrink-0 p-6 bg-black/80 flex gap-4 justify-center">
           <Button
             size="lg"
             variant="outline"
