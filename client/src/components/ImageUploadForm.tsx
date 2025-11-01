@@ -255,7 +255,8 @@ export default function ImageUploadForm() {
     try {
       let uploadedCount = 0;
       
-      for (const [index, image] of capturedImages.entries()) {
+      for (let i = 0; i < capturedImages.length; i++) {
+        const image = capturedImages[i];
         const ext = image.file.name.split('.').pop() || 'jpg';
         const filename = generateFilename(ext);
         const imageName = filename.substring(0, filename.lastIndexOf('.')); // Remove extension for API
@@ -286,7 +287,7 @@ export default function ImageUploadForm() {
           
           if (response.ok) uploadedCount++;
         } catch (err: any) {
-          console.error(`Image ${index + 1} upload failed:`, err.message);
+          console.error(`Image ${i + 1} upload failed:`, err.message);
         }
       }
 
@@ -504,27 +505,39 @@ export default function ImageUploadForm() {
           <p className="text-muted-foreground text-base sm:text-lg">Capture and organize images</p>
         </div>
         <div className="flex flex-col items-center gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            size="lg"
-            className="min-h-12 sm:min-h-14"
-            onClick={() => handleCheckUpdates(false)}
-            disabled={isCheckingUpdates}
-            data-testid="button-check-updates"
-          >
-            {isCheckingUpdates ? (
-              <>
-                <Loader2 className="w-5 h-5 mr-2 animate-spin" />
-                Checking...
-              </>
-            ) : (
-              <>
-                <RefreshCw className="w-5 h-5 mr-2" />
-                Check for Updates
-              </>
-            )}
-          </Button>
+          <div className="flex flex-col sm:flex-row gap-2 sm:gap-3">
+            <Button
+              type="button"
+              variant="outline"
+              size="lg"
+              className="min-h-12 sm:min-h-14"
+              onClick={() => handleCheckUpdates(false)}
+              disabled={isCheckingUpdates}
+              data-testid="button-check-updates"
+            >
+              {isCheckingUpdates ? (
+                <>
+                  <Loader2 className="w-5 h-5 mr-2 animate-spin" />
+                  Checking...
+                </>
+              ) : (
+                <>
+                  <RefreshCw className="w-5 h-5 mr-2" />
+                  Check for Updates
+                </>
+              )}
+            </Button>
+            <Button
+              type="button"
+              size="lg"
+              className="min-h-12 sm:min-h-14 bg-blue-600 hover:bg-blue-700 text-white"
+              onClick={() => window.location.reload()}
+              data-testid="button-hard-refresh"
+            >
+              <RefreshCw className="w-5 h-5 mr-2" />
+              Refresh Page
+            </Button>
+          </div>
           <div className="text-xs text-muted-foreground text-center">
             <p className="flex items-center gap-1 justify-center">
               <Check className="w-3 h-3 text-green-600" />
