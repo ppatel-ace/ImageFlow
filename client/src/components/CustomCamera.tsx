@@ -16,6 +16,8 @@ export default function CustomCamera({ onCapture, onClose }: CustomCameraProps) 
   const [zoom, setZoom] = useState(1);
   const [brightness, setBrightness] = useState(100);
   const [hasZoomSupport, setHasZoomSupport] = useState(false);
+  const [capturedImage, setCapturedImage] = useState<string | null>(null);
+  const [capturedFile, setCapturedFile] = useState<File | null>(null);
 
   useEffect(() => {
     startCamera();
@@ -103,7 +105,7 @@ export default function CustomCamera({ onCapture, onClose }: CustomCameraProps) 
     // Draw video frame to canvas
     context.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-    // Convert canvas to blob
+    // Convert canvas to blob and show preview
     canvas.toBlob((blob) => {
       if (blob) {
         const timestamp = Date.now();
@@ -111,15 +113,89 @@ export default function CustomCamera({ onCapture, onClose }: CustomCameraProps) 
           type: "image/jpeg",
         });
         
-        stopCamera();
-        onCapture(file);
-        onClose();
+        // Create preview URL
+        const imageUrl = URL.createObjectURL(blob);
+        
+        // Store captured image and file for preview
+        setCapturedImage(imageUrl);
+        setCapturedFile(file);
       }
     }, "image/jpeg", 0.95);
   };
 
+  const handleUsePhoto = () => {
+    if (capturedFile) {
+      stopCamera();
+      onCapture(capturedFile);
+      onClose();
+    }
+  };
+
+  const handleRetake = () => {
+    if (capturedImage) {
+      URL.revokeObjectURL(capturedImage);
+    }
+    setCapturedImage(null);
+    setCapturedFile(null);
+  };
+
+  // Show photo confirmation screen if photo was captured
+  if (capturedImage) {
+    return (
+      <div className="fixed inset-0 z-[9999] bg-black flex flex-col">
+        {/* Header */}
+        <div className="p-4 bg-black/80 flex justify-between items-center">
+          <h2 className="text-white text-xl font-semibold">Photo Preview</h2>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="text-white hover:bg-white/20"
+            onClick={() => {
+              stopCamera();
+              onClose();
+            }}
+            data-testid="button-close-camera"
+          >
+            <X className="w-6 h-6" />
+          </Button>
+        </div>
+
+        {/* Photo Preview */}
+        <div className="flex-1 flex items-center justify-center p-4">
+          <img
+            src={capturedImage}
+            alt="Captured"
+            className="max-w-full max-h-full object-contain"
+          />
+        </div>
+
+        {/* Action Buttons */}
+        <div className="p-6 bg-black/80 flex gap-4 justify-center">
+          <Button
+            size="lg"
+            variant="outline"
+            className="min-h-14 px-8 text-lg bg-white/10 text-white border-white/40 hover:bg-white/20"
+            onClick={handleRetake}
+            data-testid="button-retake-photo"
+          >
+            Cancel
+          </Button>
+          <Button
+            size="lg"
+            className="min-h-14 px-8 text-lg bg-blue-600 hover:bg-blue-700 text-white"
+            onClick={handleUsePhoto}
+            data-testid="button-use-photo"
+          >
+            Use this Photo
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  // Show camera view
   return (
-    <div className="fixed inset-0 z-50 bg-black">
+    <div className="fixed inset-0 z-[9999] bg-black">
       {/* Header */}
       <div className="absolute top-0 left-0 right-0 z-10 p-4 bg-gradient-to-b from-black/80 to-transparent">
         <div className="flex justify-between items-center">
