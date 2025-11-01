@@ -142,9 +142,9 @@ export default function CustomCamera({ onCapture, onClose }: CustomCameraProps) 
   // Show photo confirmation screen if photo was captured
   if (capturedImage) {
     return (
-      <div className="fixed inset-0 z-[9999] bg-black" style={{ height: '100vh', height: '100dvh' }}>
+      <div className="fixed top-0 left-0 right-0 bottom-0 z-[9999] bg-black w-screen" style={{ height: '100dvh' }}>
         {/* Header */}
-        <div className="absolute top-0 left-0 right-0 z-10 p-4 bg-black/80 flex justify-between items-center">
+        <div className="absolute top-0 left-0 right-0 z-10 p-4 bg-black/80 flex justify-between items-center h-16">
           <h2 className="text-white text-xl font-semibold">Photo Preview</h2>
           <Button
             variant="ghost"
@@ -160,23 +160,38 @@ export default function CustomCamera({ onCapture, onClose }: CustomCameraProps) 
           </Button>
         </div>
 
-        {/* Photo Preview - Positioned between header and buttons */}
+        {/* Photo Preview - Calculated to fit between header and buttons */}
         <div 
           className="absolute left-0 right-0 flex items-center justify-center overflow-hidden px-4"
           style={{ 
-            top: '72px', 
-            bottom: '120px'
+            top: '64px', 
+            bottom: '100px'
           }}
         >
           <img
             src={capturedImage}
             alt="Captured"
-            className="max-w-full max-h-full object-contain"
+            style={{ 
+              maxWidth: '100%',
+              maxHeight: '100%',
+              width: 'auto',
+              height: 'auto',
+              objectFit: 'contain'
+            }}
           />
         </div>
 
-        {/* Action Buttons - Fixed at bottom */}
-        <div className="absolute bottom-0 left-0 right-0 z-10 p-6 bg-black/80 flex gap-4 justify-center">
+        {/* Action Buttons - Fixed at bottom with safe area */}
+        <div 
+          className="absolute left-0 right-0 z-10 bg-black/90 flex gap-4 justify-center"
+          style={{
+            bottom: '0',
+            paddingTop: '20px',
+            paddingBottom: 'max(20px, env(safe-area-inset-bottom))',
+            paddingLeft: '24px',
+            paddingRight: '24px'
+          }}
+        >
           <Button
             size="lg"
             variant="outline"
