@@ -155,12 +155,12 @@ export default function CustomCamera({ onCapture, onClose }: CustomCameraProps) 
       <canvas ref={canvasRef} className="hidden" />
 
       {/* Zoom Control - Vertical on Right Side */}
-      <div className="absolute right-2 top-1/4 z-20">
-        <div className="bg-black/80 rounded-lg p-4 border-2 border-white/40">
-          <div className="flex flex-col items-center gap-2">
-            <span className="text-white text-sm font-bold">Zoom</span>
-            <div className="flex flex-col items-center gap-1">
-              <span className="text-white text-xs">3x</span>
+      <div className="absolute right-3 top-1/4 z-20">
+        <div className="bg-black/90 rounded-lg p-5 border-4 border-white/60 shadow-lg">
+          <div className="flex flex-col items-center gap-3">
+            <span className="text-white text-base font-bold">Zoom</span>
+            <div className="flex flex-col items-center gap-2">
+              <span className="text-white text-sm font-bold">3x</span>
               <input
                 type="range"
                 min="1"
@@ -171,22 +171,23 @@ export default function CustomCamera({ onCapture, onClose }: CustomCameraProps) 
                 className="h-48 cursor-pointer"
                 style={{
                   WebkitAppearance: 'slider-vertical',
-                  width: '30px'
+                  width: '30px',
+                  accentColor: 'white'
                 } as React.CSSProperties}
                 data-testid="slider-zoom"
               />
-              <span className="text-white text-xs">1x</span>
+              <span className="text-white text-sm font-bold">1x</span>
             </div>
-            <span className="text-white text-base font-bold">{zoom.toFixed(1)}x</span>
+            <span className="text-white text-xl font-bold">{zoom.toFixed(1)}x</span>
           </div>
         </div>
       </div>
 
       {/* Brightness Control - Horizontal at Bottom */}
-      <div className="absolute bottom-28 left-4 right-4 z-20">
-        <div className="bg-black/80 rounded-lg p-4 border-2 border-white/40">
-          <div className="flex items-center gap-3">
-            <span className="text-white text-sm font-bold whitespace-nowrap">Brightness</span>
+      <div className="absolute bottom-32 left-4 right-4 z-20">
+        <div className="bg-black/90 rounded-lg p-5 border-4 border-white/60 shadow-lg">
+          <div className="flex items-center gap-4">
+            <span className="text-white text-base font-bold whitespace-nowrap">Brightness</span>
             <input
               type="range"
               min="50"
@@ -194,10 +195,13 @@ export default function CustomCamera({ onCapture, onClose }: CustomCameraProps) 
               step="5"
               value={brightness}
               onChange={(e) => setBrightness(parseInt(e.target.value))}
-              className="flex-1 h-8 cursor-pointer"
+              className="flex-1 h-10 cursor-pointer"
+              style={{
+                accentColor: 'white'
+              }}
               data-testid="slider-brightness"
             />
-            <span className="text-white text-base font-bold w-14 text-right">{brightness}%</span>
+            <span className="text-white text-lg font-bold w-16 text-right">{brightness}%</span>
           </div>
         </div>
       </div>
