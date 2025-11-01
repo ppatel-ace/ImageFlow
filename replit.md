@@ -102,7 +102,19 @@ Preferred communication style: Simple, everyday language.
 - Success green (142° hue) and error red (0° hue) for status feedback
 
 **Image Upload Flow**
-- Camera input prioritized for direct capture on tablet devices
+- **Hybrid Camera System**: Device-adaptive camera experience
+  - **Android Devices** (Primary users - technicians with tablets):
+    - Custom camera screen with full-screen live preview
+    - Vertical zoom slider (1x to 3x) on the right side
+    - Horizontal brightness slider (50% to 150%) at the bottom
+    - Large circular capture button for easy tablet use
+    - Button text: "Open Camera"
+  - **iOS Devices** (iPhone users via browser):
+    - Native iOS camera app integration via file input
+    - Uses Apple's built-in zoom (pinch gesture) and exposure controls
+    - Button text: "Take Photo"
+  - Device detection via user agent (client/src/lib/deviceDetection.ts)
+  - Custom camera component (client/src/components/CustomCamera.tsx)
 - **Multiple photo capture**: Users can take/select multiple photos before uploading
   - Images stored in `capturedImages` array with `{ id, file, preview }` structure
   - Each image has unique ID generated with `Date.now() + Math.random()`
