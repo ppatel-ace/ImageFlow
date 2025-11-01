@@ -1,5 +1,6 @@
 import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
+import { initializeScheduler } from "./scheduler";
 import path from "path";
 import fs from "fs";
 import { fileURLToPath } from "url";
@@ -99,5 +100,8 @@ app.use((req, res, next) => {
     reusePort: true,
   }, () => {
     log(`serving on port ${port}`);
+    
+    // Initialize the Excel update scheduler
+    initializeScheduler();
   });
 })();
