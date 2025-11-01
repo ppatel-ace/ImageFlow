@@ -966,8 +966,9 @@ export default function ImageUploadForm() {
         </Button>
       </form>
       
-      <div className="text-center mt-8 pb-4">
+      <div className="text-center mt-8 pb-4 space-y-1">
         <p className="text-sm text-muted-foreground">Made by PP Inc.</p>
+        <p className="text-xs text-muted-foreground">Version 1.0</p>
       </div>
 
       {/* Custom Camera Modal - Android only - Rendered via Portal to bypass layout constraints */}
