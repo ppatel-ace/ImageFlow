@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { createPortal } from "react-dom";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -53,6 +54,18 @@ export default function ImageUploadForm() {
   const [lastManualCheck, setLastManualCheck] = useState<string | null>(null);
   const [showCustomCamera, setShowCustomCamera] = useState(false);
   const { toast } = useToast();
+
+  // Prevent body scroll when camera is open
+  useEffect(() => {
+    if (showCustomCamera) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = '';
+    }
+    return () => {
+      document.body.style.overflow = '';
+    };
+  }, [showCustomCamera]);
 
   // Clear old localStorage entries that are no longer used (auto-filled fields)
   useEffect(() => {
@@ -957,12 +970,13 @@ export default function ImageUploadForm() {
         <p className="text-sm text-muted-foreground">Made by PP Inc.</p>
       </div>
 
-      {/* Custom Camera Modal - Android only */}
-      {showCustomCamera && (
+      {/* Custom Camera Modal - Android only - Rendered via Portal to bypass layout constraints */}
+      {showCustomCamera && createPortal(
         <CustomCamera
           onCapture={handleCameraCapture}
           onClose={() => setShowCustomCamera(false)}
-        />
+        />,
+        document.body
       )}
     </div>
   );
