@@ -142,9 +142,9 @@ export default function CustomCamera({ onCapture, onClose }: CustomCameraProps) 
   // Show photo confirmation screen if photo was captured
   if (capturedImage) {
     return (
-      <div className="fixed inset-0 z-[9999] bg-black flex flex-col h-screen overflow-hidden">
+      <div className="fixed inset-0 z-[9999] bg-black" style={{ height: '100vh', height: '100dvh' }}>
         {/* Header */}
-        <div className="flex-shrink-0 p-4 bg-black/80 flex justify-between items-center">
+        <div className="absolute top-0 left-0 right-0 z-10 p-4 bg-black/80 flex justify-between items-center">
           <h2 className="text-white text-xl font-semibold">Photo Preview</h2>
           <Button
             variant="ghost"
@@ -160,8 +160,14 @@ export default function CustomCamera({ onCapture, onClose }: CustomCameraProps) 
           </Button>
         </div>
 
-        {/* Photo Preview - Limited height to ensure buttons are visible */}
-        <div className="flex-1 min-h-0 flex items-center justify-center p-4 overflow-hidden">
+        {/* Photo Preview - Positioned between header and buttons */}
+        <div 
+          className="absolute left-0 right-0 flex items-center justify-center overflow-hidden px-4"
+          style={{ 
+            top: '72px', 
+            bottom: '120px'
+          }}
+        >
           <img
             src={capturedImage}
             alt="Captured"
@@ -169,8 +175,8 @@ export default function CustomCamera({ onCapture, onClose }: CustomCameraProps) 
           />
         </div>
 
-        {/* Action Buttons - Always visible at bottom */}
-        <div className="flex-shrink-0 p-6 bg-black/80 flex gap-4 justify-center">
+        {/* Action Buttons - Fixed at bottom */}
+        <div className="absolute bottom-0 left-0 right-0 z-10 p-6 bg-black/80 flex gap-4 justify-center">
           <Button
             size="lg"
             variant="outline"
