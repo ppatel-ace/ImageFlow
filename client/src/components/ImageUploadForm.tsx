@@ -14,6 +14,8 @@ import { format } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
 import { useQuery } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
+import CustomCamera from "@/components/CustomCamera";
+import { shouldUseCustomCamera } from "@/lib/deviceDetection";
 
 // Sanitize path components by replacing invalid characters with underscore
 const sanitizePath = (value: string): string => {
@@ -49,6 +51,7 @@ export default function ImageUploadForm() {
   const [isCheckingUpdates, setIsCheckingUpdates] = useState(false);
   const [lastAutoCheck, setLastAutoCheck] = useState<string | null>(null);
   const [lastManualCheck, setLastManualCheck] = useState<string | null>(null);
+  const [showCustomCamera, setShowCustomCamera] = useState(false);
   const { toast } = useToast();
 
   // Clear old localStorage entries that are no longer used (auto-filled fields)
@@ -153,6 +156,29 @@ export default function ImageUploadForm() {
       
       // Reset input value so same file can be selected again
       e.target.value = '';
+    }
+  };
+
+  const handleCameraCapture = (file: File) => {
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      const newImage: CapturedImage = {
+        file: file,
+        preview: reader.result as string,
+        id: `${Date.now()}-${Math.random()}`
+      };
+      setCapturedImages(prev => [...prev, newImage]);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleTakePhotoClick = () => {
+    // Use custom camera for Android, native camera for iOS
+    if (shouldUseCustomCamera()) {
+      setShowCustomCamera(true);
+    } else {
+      // Use native camera input for iOS
+      document.getElementById("camera-input")?.click();
     }
   };
 
@@ -772,12 +798,12 @@ export default function ImageUploadForm() {
                   variant="outline"
                   size="lg"
                   className="w-full sm:flex-1 min-h-12 sm:min-h-14"
-                  onClick={() => document.getElementById("camera-input")?.click()}
+                  onClick={handleTakePhotoClick}
                   disabled={!workOrderMatches}
                   data-testid="button-camera"
                 >
                   <Camera className="w-5 h-5 mr-2" />
-                  Take Photo
+                  {shouldUseCustomCamera() ? "Open Camera" : "Take Photo"}
                 </Button>
                 <Button
                   type="button"
@@ -930,6 +956,14 @@ export default function ImageUploadForm() {
       <div className="text-center mt-8 pb-4">
         <p className="text-sm text-muted-foreground">Made by PP Inc.</p>
       </div>
+
+      {/* Custom Camera Modal - Android only */}
+      {showCustomCamera && (
+        <CustomCamera
+          onCapture={handleCameraCapture}
+          onClose={() => setShowCustomCamera(false)}
+        />
+      )}
     </div>
   );
 }
