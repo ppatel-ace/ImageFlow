@@ -137,6 +137,8 @@ export default function CustomCamera({ onCapture, onClose }: CustomCameraProps) 
     }
     setCapturedImage(null);
     setCapturedFile(null);
+    // Restart camera for retake
+    startCamera();
   };
 
   // Show photo confirmation screen if photo was captured
