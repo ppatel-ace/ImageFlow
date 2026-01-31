@@ -12,6 +12,8 @@ export default function CustomCamera({ onCapture, onClose }: CustomCameraProps) 
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const captureCancelledRef = useRef<boolean>(false);
+  const metadataListenerPendingRef = useRef<boolean>(false);
   
   const [zoom, setZoom] = useState(1);
   const [brightness, setBrightness] = useState(100);
@@ -86,41 +88,216 @@ export default function CustomCamera({ onCapture, onClose }: CustomCameraProps) 
     }
   };
 
-  const capturePhoto = () => {
-    if (!videoRef.current || !canvasRef.current) return;
+  const capturePhoto = async () => {
+    if (!streamRef.current || !canvasRef.current) return;
 
-    const video = videoRef.current;
+    // Reset capture cancelled flag at start of new capture
+    captureCancelledRef.current = false;
+
+    const track = streamRef.current.getVideoTracks()[0];
     const canvas = canvasRef.current;
     const context = canvas.getContext("2d");
-
+    
     if (!context) return;
 
-    // Set canvas size to match video
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
+    // Helper to set capture result, checking if cancelled
+    const setCaptureResult = (imageUrl: string, file: File) => {
+      if (captureCancelledRef.current) {
+        console.log("Capture was cancelled, ignoring late result");
+        URL.revokeObjectURL(imageUrl);
+        return;
+      }
+      setCapturedImage(imageUrl);
+      setCapturedFile(file);
+    };
 
-    // Apply brightness filter
-    context.filter = `brightness(${brightness}%)`;
-    
-    // Draw video frame to canvas
-    context.drawImage(video, 0, 0, canvas.width, canvas.height);
+    // Helper function for canvas-based capture (fallback)
+    const captureViaCanvas = () => {
+      if (!videoRef.current) return;
+      
+      const video = videoRef.current;
+      
+      // Ensure video dimensions are ready
+      if (video.videoWidth === 0 || video.videoHeight === 0) {
+        // Prevent multiple listeners from stacking
+        if (metadataListenerPendingRef.current) {
+          console.log("Already waiting for video metadata...");
+          return;
+        }
+        console.log("Video dimensions not ready, waiting...");
+        metadataListenerPendingRef.current = true;
+        video.addEventListener('loadedmetadata', () => {
+          metadataListenerPendingRef.current = false;
+          captureViaCanvas();
+        }, { once: true });
+        return;
+      }
+      
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      context.filter = `brightness(${brightness}%)`;
+      context.drawImage(video, 0, 0, canvas.width, canvas.height);
+      // Reset filter after draw
+      context.filter = 'none';
 
-    // Convert canvas to blob and show preview
-    canvas.toBlob((blob) => {
-      if (blob) {
-        const timestamp = Date.now();
-        const file = new File([blob], `photo-${timestamp}.jpg`, {
-          type: "image/jpeg",
-        });
+      canvas.toBlob((blob) => {
+        if (blob) {
+          const timestamp = Date.now();
+          const file = new File([blob], `photo-${timestamp}.jpg`, {
+            type: "image/jpeg",
+          });
+          const imageUrl = URL.createObjectURL(blob);
+          setCaptureResult(imageUrl, file);
+          console.log("Photo captured using canvas fallback");
+        }
+      }, "image/jpeg", 1.0); // Max quality for fallback too
+    };
+
+    // Helper to wrap a promise with a timeout, marks capture as cancelled on timeout
+    const withTimeout = <T,>(promise: Promise<T>, ms: number, fallback: () => void): Promise<T> => {
+      return new Promise((resolve, reject) => {
+        let timedOut = false;
+        const timeout = setTimeout(() => {
+          timedOut = true;
+          // Mark ImageCapture path as cancelled so late results are ignored
+          captureCancelledRef.current = true;
+          reject(new Error("Operation timeout"));
+          fallback();
+        }, ms);
         
-        // Create preview URL
+        promise
+          .then((result) => {
+            clearTimeout(timeout);
+            // If we already timed out and triggered fallback, ignore this late result
+            if (timedOut) {
+              console.log("Ignoring late ImageCapture result after timeout");
+              return;
+            }
+            resolve(result);
+          })
+          .catch((error) => {
+            clearTimeout(timeout);
+            if (!timedOut) {
+              reject(error);
+            }
+          });
+      });
+    };
+
+    // Helper to apply brightness to blob via canvas with timeout and error handling
+    const applyBrightnessToBlob = (blob: Blob): Promise<{ file: File; previewUrl: string }> => {
+      return new Promise((resolve, reject) => {
+        const img = new Image();
         const imageUrl = URL.createObjectURL(blob);
         
-        // Store captured image and file for preview
-        setCapturedImage(imageUrl);
-        setCapturedFile(file);
+        // Timeout after 5 seconds
+        const timeout = setTimeout(() => {
+          URL.revokeObjectURL(imageUrl);
+          reject(new Error("Image decode timeout"));
+        }, 5000);
+        
+        img.onload = () => {
+          clearTimeout(timeout);
+          canvas.width = img.width;
+          canvas.height = img.height;
+          context.filter = `brightness(${brightness}%)`;
+          context.drawImage(img, 0, 0);
+          // Reset filter after draw
+          context.filter = 'none';
+          URL.revokeObjectURL(imageUrl);
+          
+          canvas.toBlob((adjustedBlob) => {
+            if (adjustedBlob) {
+              const timestamp = Date.now();
+              const file = new File([adjustedBlob], `photo-${timestamp}.jpg`, {
+                type: "image/jpeg",
+              });
+              // Create preview URL directly from the blob, no re-encoding
+              const previewUrl = URL.createObjectURL(adjustedBlob);
+              resolve({ file, previewUrl });
+            } else {
+              reject(new Error("Canvas toBlob failed"));
+            }
+          }, "image/jpeg", 1.0);
+        };
+        
+        img.onerror = () => {
+          clearTimeout(timeout);
+          URL.revokeObjectURL(imageUrl);
+          reject(new Error("Image decode failed"));
+        };
+        
+        img.src = imageUrl;
+      });
+    };
+
+    try {
+      // Check if Image Capture API is available and track is live
+      if ('ImageCapture' in window && track && track.readyState === 'live' && track.enabled) {
+        const imageCapture = new (window as any).ImageCapture(track);
+        
+        // Get photo capabilities to check what's supported
+        let photoSettings: any = {
+          imageQuality: 1.0 // Maximum quality
+        };
+        
+        try {
+          const capabilities = await imageCapture.getPhotoCapabilities();
+          // Add fill light mode if supported (enables flash)
+          if (capabilities.fillLightMode && capabilities.fillLightMode.includes('auto')) {
+            photoSettings.fillLightMode = 'auto';
+          }
+        } catch (e) {
+          console.log("Could not get photo capabilities, using defaults");
+        }
+        
+        // Take high-quality photo from camera sensor with 10 second timeout
+        const blob = await withTimeout<Blob>(
+          imageCapture.takePhoto(photoSettings),
+          10000,
+          captureViaCanvas
+        );
+        
+        // Check if capture was cancelled (timeout triggered fallback)
+        if (captureCancelledRef.current) {
+          console.log("ImageCapture succeeded but capture was cancelled, ignoring");
+          return;
+        }
+        
+        // Apply brightness adjustment if needed
+        if (brightness !== 100) {
+          try {
+            const { file, previewUrl } = await applyBrightnessToBlob(blob);
+            setCaptureResult(previewUrl, file);
+          } catch (brightnessError) {
+            // Brightness adjustment failed, use original blob without adjustment
+            console.log("Brightness adjustment failed, using original:", brightnessError);
+            const timestamp = Date.now();
+            const file = new File([blob], `photo-${timestamp}.jpg`, {
+              type: "image/jpeg",
+            });
+            const previewUrl = URL.createObjectURL(blob);
+            setCaptureResult(previewUrl, file);
+          }
+        } else {
+          // No brightness adjustment needed, use original high-quality blob
+          const timestamp = Date.now();
+          const file = new File([blob], `photo-${timestamp}.jpg`, {
+            type: "image/jpeg",
+          });
+          const previewUrl = URL.createObjectURL(blob);
+          setCaptureResult(previewUrl, file);
+        }
+        
+        console.log("Photo captured using Image Capture API (high quality)");
+        return;
       }
-    }, "image/jpeg", 0.95);
+    } catch (error) {
+      console.log("Image Capture API failed, falling back to canvas:", error);
+    }
+
+    // Fallback: Canvas-based capture for browsers without Image Capture support
+    captureViaCanvas();
   };
 
   const handleUsePhoto = () => {
