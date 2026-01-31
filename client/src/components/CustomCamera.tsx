@@ -236,16 +236,29 @@ export default function CustomCamera({ onCapture, onClose }: CustomCameraProps) 
       if ('ImageCapture' in window && track && track.readyState === 'live' && track.enabled) {
         const imageCapture = new (window as any).ImageCapture(track);
         
-        // Get photo capabilities to check what's supported
+        // Settings optimized for sharp document/label photos
         let photoSettings: any = {
-          imageQuality: 1.0 // Maximum quality
+          imageQuality: 1.0 // No compression - maximum quality
         };
         
         try {
           const capabilities = await imageCapture.getPhotoCapabilities();
-          // Add fill light mode if supported (enables flash)
-          if (capabilities.fillLightMode && capabilities.fillLightMode.includes('auto')) {
+          
+          // Use flash mode to flatten shadows on labels/documents
+          if (capabilities.fillLightMode && capabilities.fillLightMode.includes('flash')) {
+            photoSettings.fillLightMode = 'flash';
+          } else if (capabilities.fillLightMode && capabilities.fillLightMode.includes('auto')) {
             photoSettings.fillLightMode = 'auto';
+          }
+          
+          // Add slight exposure compensation to keep paper white without losing ink detail
+          if (capabilities.exposureCompensation) {
+            const expRange = capabilities.exposureCompensation;
+            // Target +0.5 EV, but clamp to device's supported range
+            const targetExp = 0.5;
+            if (expRange.min !== undefined && expRange.max !== undefined) {
+              photoSettings.exposureCompensation = Math.min(Math.max(targetExp, expRange.min), expRange.max);
+            }
           }
         } catch (e) {
           console.log("Could not get photo capabilities, using defaults");
