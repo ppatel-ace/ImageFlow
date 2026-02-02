@@ -17,7 +17,11 @@ export default function CustomCamera({ onCapture, onClose }: CustomCameraProps) 
   
   const [zoom, setZoom] = useState(1);
   const [brightness, setBrightness] = useState(100);
+  const [contrast, setContrast] = useState(100); // Always UI percent (50-200)
   const [hasZoomSupport, setHasZoomSupport] = useState(false);
+  const [hasContrastSupport, setHasContrastSupport] = useState(false);
+  // Hardware contrast range (device units) - used for mapping only
+  const [hardwareContrastRange, setHardwareContrastRange] = useState<{ min: number; max: number; step: number } | null>(null);
   const [capturedImage, setCapturedImage] = useState<string | null>(null);
   const [capturedFile, setCapturedFile] = useState<File | null>(null);
 
@@ -44,16 +48,36 @@ export default function CustomCamera({ onCapture, onClose }: CustomCameraProps) 
         videoRef.current.srcObject = stream;
       }
 
-      // Check if zoom is supported
+      // Check if zoom and contrast are supported
       const videoTrack = stream.getVideoTracks()[0];
       const capabilities = videoTrack.getCapabilities() as any;
+      const settings = videoTrack.getSettings() as any;
       
       if (capabilities.zoom) {
         setHasZoomSupport(true);
-        const settings = videoTrack.getSettings() as any;
         if (settings.zoom) {
           setZoom(settings.zoom);
         }
+      }
+      
+      // Check if hardware contrast is supported
+      if (capabilities.contrast) {
+        setHasContrastSupport(true);
+        // Store hardware range for mapping - we'll convert UI percent to device units
+        setHardwareContrastRange({
+          min: capabilities.contrast.min,
+          max: capabilities.contrast.max,
+          step: capabilities.contrast.step || 1
+        });
+        // UI always uses percent (50-200), start at 100% (neutral)
+        setContrast(100);
+        console.log("Hardware contrast supported:", capabilities.contrast);
+      } else {
+        // Software fallback - UI uses 50-200 range as percentage
+        console.log("Hardware contrast not supported. Using software fallback.");
+        setHasContrastSupport(false);
+        setHardwareContrastRange(null);
+        setContrast(100);
       }
     } catch (error) {
       console.error("Error accessing camera:", error);
@@ -86,6 +110,34 @@ export default function CustomCamera({ onCapture, onClose }: CustomCameraProps) 
         }
       }
     }
+  };
+
+  // Map UI percent (50-200) to hardware device range
+  const mapPercentToHardware = (percent: number): number => {
+    if (!hardwareContrastRange) return percent;
+    // UI range: 50-200, maps to hardware min-max
+    // 100% UI = midpoint of hardware range
+    const uiMin = 50, uiMax = 200;
+    const ratio = (percent - uiMin) / (uiMax - uiMin);
+    return hardwareContrastRange.min + ratio * (hardwareContrastRange.max - hardwareContrastRange.min);
+  };
+
+  const handleContrastChange = async (value: number) => {
+    setContrast(value); // Always store as UI percent
+    
+    // If hardware contrast is supported, map UI percent to device units and apply
+    if (streamRef.current && hasContrastSupport && hardwareContrastRange) {
+      const videoTrack = streamRef.current.getVideoTracks()[0];
+      const hardwareValue = mapPercentToHardware(value);
+      try {
+        await videoTrack.applyConstraints({
+          advanced: [{ contrast: hardwareValue } as any]
+        });
+      } catch (error) {
+        console.error("Error applying hardware contrast:", error);
+      }
+    }
+    // CSS filter for preview is always applied using UI percent value
   };
 
   const capturePhoto = async () => {
@@ -135,7 +187,8 @@ export default function CustomCamera({ onCapture, onClose }: CustomCameraProps) 
       
       canvas.width = video.videoWidth;
       canvas.height = video.videoHeight;
-      context.filter = `brightness(${brightness}%)`;
+      // Apply brightness and contrast (UI percent values), plus post-processing enhancement
+      context.filter = `brightness(${brightness}%) contrast(${contrast}%) saturate(110%)`;
       context.drawImage(video, 0, 0, canvas.width, canvas.height);
       // Reset filter after draw
       context.filter = 'none';
@@ -184,8 +237,9 @@ export default function CustomCamera({ onCapture, onClose }: CustomCameraProps) 
       });
     };
 
-    // Helper to apply brightness to blob via canvas with timeout and error handling
-    const applyBrightnessToBlob = (blob: Blob): Promise<{ file: File; previewUrl: string }> => {
+    // Helper to apply post-processing enhancements to blob via canvas
+    // Uses OffscreenCanvas for professional document/label enhancement
+    const applyPostProcessing = (blob: Blob): Promise<{ file: File; previewUrl: string }> => {
       return new Promise((resolve, reject) => {
         const img = new Image();
         const imageUrl = URL.createObjectURL(blob);
@@ -198,27 +252,68 @@ export default function CustomCamera({ onCapture, onClose }: CustomCameraProps) 
         
         img.onload = () => {
           clearTimeout(timeout);
-          canvas.width = img.width;
-          canvas.height = img.height;
-          context.filter = `brightness(${brightness}%)`;
-          context.drawImage(img, 0, 0);
-          // Reset filter after draw
-          context.filter = 'none';
           URL.revokeObjectURL(imageUrl);
           
-          canvas.toBlob((adjustedBlob) => {
-            if (adjustedBlob) {
-              const timestamp = Date.now();
-              const file = new File([adjustedBlob], `photo-${timestamp}.jpg`, {
-                type: "image/jpeg",
-              });
-              // Create preview URL directly from the blob, no re-encoding
-              const previewUrl = URL.createObjectURL(adjustedBlob);
-              resolve({ file, previewUrl });
+          // Use OffscreenCanvas for better performance if available
+          let processingCanvas: HTMLCanvasElement | OffscreenCanvas;
+          let processingCtx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null;
+          
+          if (typeof OffscreenCanvas !== 'undefined') {
+            processingCanvas = new OffscreenCanvas(img.width, img.height);
+            processingCtx = processingCanvas.getContext('2d');
+          } else {
+            // Fallback to regular canvas
+            canvas.width = img.width;
+            canvas.height = img.height;
+            processingCanvas = canvas;
+            processingCtx = context;
+          }
+          
+          if (!processingCtx) {
+            reject(new Error("Could not get canvas context"));
+            return;
+          }
+          
+          // Apply user brightness and contrast (UI percent) plus pro enhancement
+          // Professional tip: contrast(1.1) saturate(1.1) brightness(1.02) for sharp text
+          const brightnessMultiplier = brightness / 100;
+          const contrastMultiplier = contrast / 100;
+          
+          // Final filter: user adjustments + slight enhancement boost for document capture
+          processingCtx.filter = `brightness(${brightnessMultiplier * 102}%) contrast(${contrastMultiplier * 110}%) saturate(110%)`;
+          processingCtx.drawImage(img, 0, 0);
+          processingCtx.filter = 'none';
+          
+          // Convert to blob
+          const convertToBlob = () => {
+            if (processingCanvas instanceof OffscreenCanvas) {
+              processingCanvas.convertToBlob({ type: "image/jpeg", quality: 0.95 })
+                .then((adjustedBlob) => {
+                  const timestamp = Date.now();
+                  const file = new File([adjustedBlob], `photo-${timestamp}.jpg`, {
+                    type: "image/jpeg",
+                  });
+                  const previewUrl = URL.createObjectURL(adjustedBlob);
+                  resolve({ file, previewUrl });
+                })
+                .catch(reject);
             } else {
-              reject(new Error("Canvas toBlob failed"));
+              processingCanvas.toBlob((adjustedBlob) => {
+                if (adjustedBlob) {
+                  const timestamp = Date.now();
+                  const file = new File([adjustedBlob], `photo-${timestamp}.jpg`, {
+                    type: "image/jpeg",
+                  });
+                  const previewUrl = URL.createObjectURL(adjustedBlob);
+                  resolve({ file, previewUrl });
+                } else {
+                  reject(new Error("Canvas toBlob failed"));
+                }
+              }, "image/jpeg", 0.95);
             }
-          }, "image/jpeg", 1.0);
+          };
+          
+          convertToBlob();
         };
         
         img.onerror = () => {
@@ -277,23 +372,14 @@ export default function CustomCamera({ onCapture, onClose }: CustomCameraProps) 
           return;
         }
         
-        // Apply brightness adjustment if needed
-        if (brightness !== 100) {
-          try {
-            const { file, previewUrl } = await applyBrightnessToBlob(blob);
-            setCaptureResult(previewUrl, file);
-          } catch (brightnessError) {
-            // Brightness adjustment failed, use original blob without adjustment
-            console.log("Brightness adjustment failed, using original:", brightnessError);
-            const timestamp = Date.now();
-            const file = new File([blob], `photo-${timestamp}.jpg`, {
-              type: "image/jpeg",
-            });
-            const previewUrl = URL.createObjectURL(blob);
-            setCaptureResult(previewUrl, file);
-          }
-        } else {
-          // No brightness adjustment needed, use original high-quality blob
+        // Always apply post-processing for professional document capture
+        // Adds slight contrast/saturation/brightness boost for sharp text
+        try {
+          const { file, previewUrl } = await applyPostProcessing(blob);
+          setCaptureResult(previewUrl, file);
+        } catch (postProcessError) {
+          // Post-processing failed, use original blob
+          console.log("Post-processing failed, using original:", postProcessError);
           const timestamp = Date.now();
           const file = new File([blob], `photo-${timestamp}.jpg`, {
             type: "image/jpeg",
@@ -428,7 +514,7 @@ export default function CustomCamera({ onCapture, onClose }: CustomCameraProps) 
         </div>
       </div>
 
-      {/* Camera Preview */}
+      {/* Camera Preview - Always apply CSS filter for visual feedback */}
       <video
         ref={videoRef}
         autoPlay
@@ -436,7 +522,7 @@ export default function CustomCamera({ onCapture, onClose }: CustomCameraProps) 
         muted
         className="w-full h-full object-cover"
         style={{
-          filter: `brightness(${brightness}%)`
+          filter: `brightness(${brightness}%) contrast(${contrast}%)`
         }}
       />
 
@@ -470,24 +556,45 @@ export default function CustomCamera({ onCapture, onClose }: CustomCameraProps) 
         </div>
       </div>
 
-      {/* Brightness Control - Horizontal at Bottom (transparent, no background) */}
+      {/* Brightness & Contrast Controls - Horizontal at Bottom (transparent, split width) */}
       <div className="absolute bottom-24 left-4 right-4 z-20">
-        <div className="flex items-center gap-3 p-2">
-          <span className="text-white text-sm font-bold whitespace-nowrap drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)]">Brightness</span>
-          <input
-            type="range"
-            min="50"
-            max="250"
-            step="5"
-            value={brightness}
-            onChange={(e) => setBrightness(parseInt(e.target.value))}
-            className="flex-1 h-8 cursor-pointer"
-            style={{
-              accentColor: 'white'
-            }}
-            data-testid="slider-brightness"
-          />
-          <span className="text-white text-base font-bold w-16 text-right drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)]">{brightness}%</span>
+        <div className="flex flex-col gap-2 p-2">
+          {/* Brightness Slider */}
+          <div className="flex items-center gap-2">
+            <span className="text-white text-xs font-bold whitespace-nowrap drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)] w-16">Bright</span>
+            <input
+              type="range"
+              min="50"
+              max="250"
+              step="5"
+              value={brightness}
+              onChange={(e) => setBrightness(parseInt(e.target.value))}
+              className="flex-1 h-6 cursor-pointer"
+              style={{
+                accentColor: 'white'
+              }}
+              data-testid="slider-brightness"
+            />
+            <span className="text-white text-sm font-bold w-12 text-right drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)]">{brightness}%</span>
+          </div>
+          {/* Contrast Slider - Fixed UI range 50-200% */}
+          <div className="flex items-center gap-2">
+            <span className="text-white text-xs font-bold whitespace-nowrap drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)] w-16">Contrast</span>
+            <input
+              type="range"
+              min={50}
+              max={200}
+              step={5}
+              value={contrast}
+              onChange={(e) => handleContrastChange(parseFloat(e.target.value))}
+              className="flex-1 h-6 cursor-pointer"
+              style={{
+                accentColor: 'white'
+              }}
+              data-testid="slider-contrast"
+            />
+            <span className="text-white text-sm font-bold w-12 text-right drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)]">{Math.round(contrast)}%</span>
+          </div>
         </div>
       </div>
 
