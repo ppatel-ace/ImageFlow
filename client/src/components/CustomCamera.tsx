@@ -274,13 +274,9 @@ export default function CustomCamera({ onCapture, onClose }: CustomCameraProps) 
             return;
           }
           
-          // Apply user brightness and contrast (UI percent) plus pro enhancement
-          // Professional tip: contrast(1.1) saturate(1.1) brightness(1.02) for sharp text
-          const brightnessMultiplier = brightness / 100;
-          const contrastMultiplier = contrast / 100;
-          
-          // Final filter: user adjustments + slight enhancement boost for document capture
-          processingCtx.filter = `brightness(${brightnessMultiplier * 102}%) contrast(${contrastMultiplier * 110}%) saturate(110%)`;
+          // Apply user brightness and contrast directly, only add saturation boost
+          // User has already set brightness/contrast, just add subtle saturation for sharper text
+          processingCtx.filter = `brightness(${brightness}%) contrast(${contrast}%) saturate(110%)`;
           processingCtx.drawImage(img, 0, 0);
           processingCtx.filter = 'none';
           
@@ -556,12 +552,12 @@ export default function CustomCamera({ onCapture, onClose }: CustomCameraProps) 
         </div>
       </div>
 
-      {/* Brightness & Contrast Controls - Horizontal at Bottom (transparent, split width) */}
+      {/* Brightness & Contrast Controls - Side by side at Bottom (transparent, equal width) */}
       <div className="absolute bottom-24 left-4 right-4 z-20">
-        <div className="flex flex-col gap-2 p-2">
+        <div className="flex flex-row gap-4 p-2">
           {/* Brightness Slider */}
-          <div className="flex items-center gap-2">
-            <span className="text-white text-xs font-bold whitespace-nowrap drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)] w-16">Bright</span>
+          <div className="flex-1 flex items-center gap-1">
+            <span className="text-white text-xs font-bold whitespace-nowrap drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)]">Bright</span>
             <input
               type="range"
               min="50"
@@ -575,11 +571,11 @@ export default function CustomCamera({ onCapture, onClose }: CustomCameraProps) 
               }}
               data-testid="slider-brightness"
             />
-            <span className="text-white text-sm font-bold w-12 text-right drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)]">{brightness}%</span>
+            <span className="text-white text-xs font-bold w-10 text-right drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)]">{brightness}%</span>
           </div>
-          {/* Contrast Slider - Fixed UI range 50-200% */}
-          <div className="flex items-center gap-2">
-            <span className="text-white text-xs font-bold whitespace-nowrap drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)] w-16">Contrast</span>
+          {/* Contrast Slider */}
+          <div className="flex-1 flex items-center gap-1">
+            <span className="text-white text-xs font-bold whitespace-nowrap drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)]">Contrast</span>
             <input
               type="range"
               min={50}
@@ -593,7 +589,7 @@ export default function CustomCamera({ onCapture, onClose }: CustomCameraProps) 
               }}
               data-testid="slider-contrast"
             />
-            <span className="text-white text-sm font-bold w-12 text-right drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)]">{Math.round(contrast)}%</span>
+            <span className="text-white text-xs font-bold w-10 text-right drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)]">{Math.round(contrast)}%</span>
           </div>
         </div>
       </div>
