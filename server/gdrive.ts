@@ -3,12 +3,42 @@ import { writeFileSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 
+// ── Google Drive REST API response types ──────────────────────────────────────
+
+interface DriveFile {
+  id: string;
+  name: string;
+  createdTime?: string;
+  modifiedTime?: string;
+}
+
+interface DriveFileListResponse {
+  files: DriveFile[];
+  nextPageToken?: string;
+}
+
+interface DriveFileCreateResponse {
+  id: string;
+  name: string;
+  webViewLink?: string;
+}
+
+interface DriveErrorResponse {
+  error?: {
+    code: number;
+    message: string;
+    status?: string;
+  };
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
 // Replace invalid folder name characters with underscore
 function sanitizeCustomerName(customerName: string): string {
   return customerName.replace(/[<>:"/\\|?*]/g, '_');
 }
 
-// Helper to get MIME type from filename extension
+// Get MIME type from filename extension
 function getMimeType(fileName: string): string {
   const ext = fileName.split('.').pop()?.toLowerCase();
   switch (ext) {
@@ -28,7 +58,23 @@ function getMimeType(fileName: string): string {
   }
 }
 
-// Find or create a folder by name in a parent folder using connectors proxy
+// Parse a proxy response as JSON, throwing on non-2xx or Drive API error
+async function parseJsonResponse<T>(response: Response, context: string): Promise<T> {
+  if (!response.ok) {
+    const text = await response.text().catch(() => `HTTP ${response.status}`);
+    throw new Error(`Google Drive ${context} failed (${response.status}): ${text}`);
+  }
+  const data = (await response.json()) as T | DriveErrorResponse;
+  if ((data as DriveErrorResponse).error) {
+    const err = (data as DriveErrorResponse).error!;
+    throw new Error(`Google Drive ${context} error ${err.code}: ${err.message}`);
+  }
+  return data as T;
+}
+
+// ── Folder management ─────────────────────────────────────────────────────────
+
+// Find or create a folder by name inside parentId, returns the folder ID
 async function findOrCreateFolder(
   connectors: ReplitConnectors,
   folderName: string,
@@ -39,14 +85,14 @@ async function findOrCreateFolder(
   const params = new URLSearchParams({ q, fields: 'files(id,name)', spaces: 'drive' });
 
   const listResp = await connectors.proxy("google-drive", `/drive/v3/files?${params}`);
-  const listData = await listResp.json() as any;
+  const listData = await parseJsonResponse<DriveFileListResponse>(listResp, "folder list");
 
-  if (listData.files && listData.files.length > 0) {
-    return listData.files[0].id as string;
+  if (listData.files.length > 0) {
+    return listData.files[0].id;
   }
 
   // Folder doesn't exist — create it
-  const createResp = await connectors.proxy("google-drive", "/drive/v3/files?fields=id", {
+  const createResp = await connectors.proxy("google-drive", "/drive/v3/files?fields=id,name", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -55,15 +101,11 @@ async function findOrCreateFolder(
       parents: [parentId],
     }),
   });
-  const createData = await createResp.json() as any;
-
-  if (!createData.id) {
-    throw new Error(`Failed to create folder "${folderName}": ${JSON.stringify(createData)}`);
-  }
-  return createData.id as string;
+  const createData = await parseJsonResponse<DriveFileCreateResponse>(createResp, "folder create");
+  return createData.id;
 }
 
-// Ensure folder path exists, creating nested folders as needed
+// Walk pathParts creating/finding each nested folder, returns the leaf folder ID
 async function ensureFolderPath(
   connectors: ReplitConnectors,
   pathParts: string[]
@@ -75,11 +117,11 @@ async function ensureFolderPath(
   return parentId;
 }
 
+// ── Public API ────────────────────────────────────────────────────────────────
+
 // WARNING: Never cache this client.
-// The connectors SDK handles token refresh automatically, but always call fresh per request.
-export async function getUncachableGoogleDriveClient() {
-  // Returns a ReplitConnectors instance scoped to google-drive.
-  // All API calls go through the proxy which handles OAuth automatically.
+// The connectors SDK handles token refresh automatically per request.
+export async function getUncachableGoogleDriveClient(): Promise<ReplitConnectors> {
   return new ReplitConnectors();
 }
 
@@ -89,18 +131,16 @@ export async function uploadFileToGoogleDrive(
   workOrderNumber: string,
   fileName: string,
   fileBuffer: Buffer
-) {
+): Promise<{ success: boolean; path: string }> {
   const connectors = new ReplitConnectors();
 
-  // Path structure: ACE/CustomerName/Dept/WorkOrderNumber/filename
+  // Path structure: ACE/CustomerName/Dept/WorkOrderNumber
   const sanitizedCustomerName = sanitizeCustomerName(customerName);
   const pathParts = ['ACE', sanitizedCustomerName, dept, workOrderNumber];
-
-  // Ensure the folder structure exists
   const folderId = await ensureFolderPath(connectors, pathParts);
 
-  // Multipart upload: metadata + file binary
-  const boundary = 'gdrive_upload_boundary_' + Date.now();
+  // Build a multipart/related body: metadata part + binary part
+  const boundary = 'gdrive_upload_' + Date.now();
   const mimeType = getMimeType(fileName);
   const metadata = JSON.stringify({ name: fileName, parents: [folderId] });
 
@@ -113,7 +153,6 @@ export async function uploadFileToGoogleDrive(
     'utf8'
   );
   const closingPart = Buffer.from(`\r\n--${boundary}--`, 'utf8');
-
   const multipartBody = Buffer.concat([metadataPart, mediaHeader, fileBuffer, closingPart]);
 
   const uploadResp = await connectors.proxy(
@@ -121,23 +160,15 @@ export async function uploadFileToGoogleDrive(
     "/upload/drive/v3/files?uploadType=multipart&fields=id,name",
     {
       method: "POST",
-      headers: {
-        "Content-Type": `multipart/related; boundary=${boundary}`,
-      },
+      headers: { "Content-Type": `multipart/related; boundary=${boundary}` },
       body: multipartBody,
     }
   );
+  await parseJsonResponse<DriveFileCreateResponse>(uploadResp, "file upload");
 
-  const uploadData = await uploadResp.json() as any;
-
-  if (!uploadData.id) {
-    throw new Error(`Google Drive upload failed: ${JSON.stringify(uploadData)}`);
-  }
-
-  const folderPath = pathParts.join('/');
   return {
     success: true,
-    path: `${folderPath}/${fileName}`,
+    path: `${pathParts.join('/')}/${fileName}`,
   };
 }
 
@@ -157,8 +188,6 @@ export async function checkForNewExcelFile(): Promise<ExcelCheckResult> {
 
     // KSAlert folder ID provided by user
     const folderId = '1ixVvva0yj1FyytYBjj0DRuPNT4i76H76';
-
-    // Search for .xlsx files in the KSAlert folder
     const q = `'${folderId}' in parents and mimeType='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' and trashed=false`;
     const params = new URLSearchParams({
       q,
@@ -168,19 +197,16 @@ export async function checkForNewExcelFile(): Promise<ExcelCheckResult> {
     });
 
     const listResp = await connectors.proxy("google-drive", `/drive/v3/files?${params}`);
-    const listData = await listResp.json() as any;
+    const listData = await parseJsonResponse<DriveFileListResponse>(listResp, "Excel file list");
 
     if (!listData.files || listData.files.length === 0) {
-      return {
-        success: false,
-        message: 'No Excel files found in KSAlert folder',
-      };
+      return { success: false, message: 'No Excel files found in KSAlert folder' };
     }
 
     // Filter files matching YYYYMMDD.xlsx pattern
     const datePattern = /^\d{8}\.xlsx$/;
     const validFiles = listData.files.filter(
-      (file: any) => file.name && datePattern.test(file.name)
+      (file: DriveFile) => file.name && datePattern.test(file.name)
     );
 
     if (validFiles.length === 0) {
@@ -191,57 +217,49 @@ export async function checkForNewExcelFile(): Promise<ExcelCheckResult> {
     }
 
     // Sort by the date in filename (newest first)
-    validFiles.sort((a: any, b: any) => {
-      const dateA = (a.name as string).replace('.xlsx', '');
-      const dateB = (b.name as string).replace('.xlsx', '');
-      return dateB.localeCompare(dateA);
-    });
+    validFiles.sort((a: DriveFile, b: DriveFile) =>
+      b.name.replace('.xlsx', '').localeCompare(a.name.replace('.xlsx', ''))
+    );
 
     const latestFile = validFiles[0];
-    const fileId = latestFile.id as string;
-    const originalFileName = latestFile.name as string;
+    const originalFileName = latestFile.name;
 
-    // Download the file content
+    // Download file content
     const downloadResp = await connectors.proxy(
       "google-drive",
-      `/drive/v3/files/${encodeURIComponent(fileId)}?alt=media`
+      `/drive/v3/files/${encodeURIComponent(latestFile.id)}?alt=media`
     );
 
     if (!downloadResp.ok) {
-      const errText = await downloadResp.text();
-      throw new Error(`Failed to download Excel file: ${errText}`);
+      const errText = await downloadResp.text().catch(() => `HTTP ${downloadResp.status}`);
+      throw new Error(`Failed to download Excel file (${downloadResp.status}): ${errText}`);
     }
 
-    const arrayBuffer = await downloadResp.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
+    const buffer = Buffer.from(await downloadResp.arrayBuffer());
 
-    // Save the file with timestamp to attached_assets folder
+    // Save with timestamp to attached_assets folder
     const timestamp = Date.now();
     const newFileName = `OpenOrdersAllQtyOnly_${timestamp}.xlsx`;
 
     const __filename = fileURLToPath(import.meta.url);
     const __dirname = dirname(__filename);
     const filePath = join(__dirname, '..', 'attached_assets', newFileName);
-
     writeFileSync(filePath, buffer);
 
-    // Extract date from filename (YYYYMMDD format)
+    // Format date from YYYYMMDD filename
     const fileDate = originalFileName.replace('.xlsx', '');
-    const year = fileDate.substring(0, 4);
-    const month = fileDate.substring(4, 6);
-    const day = fileDate.substring(6, 8);
-    const formattedDate = `${year}-${month}-${day}`;
+    const formattedDate = `${fileDate.slice(0, 4)}-${fileDate.slice(4, 6)}-${fileDate.slice(6, 8)}`;
 
     return {
       success: true,
       message: `Excel file ${originalFileName} successfully downloaded and saved`,
       fileName: newFileName,
       fileDate: formattedDate,
-      originalFileName: originalFileName,
+      originalFileName,
     };
-  } catch (error: any) {
-    console.error('Error checking Google Drive for Excel file:', error);
-    const errorMessage = error.message || String(error);
+  } catch (error: unknown) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    console.error('Error checking Google Drive for Excel file:', errorMessage);
     return {
       success: false,
       message: errorMessage,
