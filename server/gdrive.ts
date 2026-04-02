@@ -114,6 +114,11 @@ async function uploadViaResumable(
   // Google Drive responds with a session URI in the Location header
   const sessionUri = initiateResp.headers.get("Location");
   if (!sessionUri) {
+    const body = await initiateResp.text().catch(() => "(unreadable body)");
+    console.error(
+      `[gdrive] Resumable upload initiation missing Location header. ` +
+      `Status: ${initiateResp.status}. Response headers: ${JSON.stringify(Object.fromEntries(initiateResp.headers))}. Body: ${body}`
+    );
     throw new Error("Google Drive resumable upload: no Location header in initiation response");
   }
 
