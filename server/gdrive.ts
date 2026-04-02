@@ -132,7 +132,7 @@ export async function uploadFileToGoogleDrive(
   fileName: string,
   fileBuffer: Buffer
 ): Promise<{ success: boolean; path: string }> {
-  const connectors = new ReplitConnectors();
+  const connectors = await getUncachableGoogleDriveClient();
 
   // Path structure: ACE/CustomerName/Dept/WorkOrderNumber
   const sanitizedCustomerName = sanitizeCustomerName(customerName);
@@ -184,7 +184,7 @@ export interface ExcelCheckResult {
 // Check KSAlert folder for new Excel files with YYYYMMDD.xlsx naming pattern
 export async function checkForNewExcelFile(): Promise<ExcelCheckResult> {
   try {
-    const connectors = new ReplitConnectors();
+    const connectors = await getUncachableGoogleDriveClient();
 
     // KSAlert folder ID provided by user
     const folderId = '1ixVvva0yj1FyytYBjj0DRuPNT4i76H76';
