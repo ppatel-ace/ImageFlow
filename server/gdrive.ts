@@ -58,7 +58,7 @@ function getMimeType(fileName: string): string {
   }
 }
 
-// Parse a proxy response as JSON, throwing on non-2xx or Drive API error
+// Parse a proxy response as JSON, throwing on non-2xx or Drive API error body
 async function parseJsonResponse<T>(response: Response, context: string): Promise<T> {
   if (!response.ok) {
     const text = await response.text().catch(() => `HTTP ${response.status}`);
@@ -72,17 +72,78 @@ async function parseJsonResponse<T>(response: Response, context: string): Promis
   return data as T;
 }
 
-// ── Folder management ─────────────────────────────────────────────────────────
+// Upload a file to Google Drive using the resumable upload protocol.
+//
+// Why resumable instead of multipart?
+//   The Replit connectors proxy applies an nginx request-body size limit.
+//   Multipart uploads embed the file bytes in the request body sent TO the proxy,
+//   so large images trigger a 413.  Resumable uploads split the work into two steps:
+//     1. A tiny initiation request (just JSON metadata) → goes through the proxy → OK.
+//     2. Google responds with a pre-authenticated session URI in the Location header.
+//     3. The actual file bytes are PUT directly to that session URI, bypassing the proxy.
+//   No OAuth token extraction is needed — the session URI itself is the credential.
+async function uploadViaResumable(
+  connectors: ReplitConnectors,
+  folderId: string,
+  fileName: string,
+  fileBuffer: Buffer
+): Promise<void> {
+  const mimeType = getMimeType(fileName);
 
-// Find or create a folder by name inside parentId, returns the folder ID
+  // Step 1: Initiate the session (tiny request — just JSON metadata, no file bytes)
+  const metadata = JSON.stringify({ name: fileName, parents: [folderId] });
+  const initiateResp = await connectors.proxy(
+    "google-drive",
+    `/upload/drive/v3/files?uploadType=resumable&fields=id,name`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json; charset=UTF-8",
+        "X-Upload-Content-Type": mimeType,
+        "X-Upload-Content-Length": String(fileBuffer.length),
+      },
+      body: metadata,
+    }
+  );
+
+  if (!initiateResp.ok) {
+    const text = await initiateResp.text().catch(() => `HTTP ${initiateResp.status}`);
+    throw new Error(`Google Drive upload initiation failed (${initiateResp.status}): ${text}`);
+  }
+
+  // Google Drive responds with a session URI in the Location header
+  const sessionUri = initiateResp.headers.get("Location");
+  if (!sessionUri) {
+    throw new Error("Google Drive resumable upload: no Location header in initiation response");
+  }
+
+  // Step 2: Upload the file content directly to the session URI
+  // The session URI is pre-authenticated by Google — no OAuth token required here.
+  const uploadResp = await fetch(sessionUri, {
+    method: "PUT",
+    headers: {
+      "Content-Type": mimeType,
+      "Content-Length": String(fileBuffer.length),
+    },
+    body: fileBuffer,
+  });
+
+  if (!uploadResp.ok) {
+    const text = await uploadResp.text().catch(() => `HTTP ${uploadResp.status}`);
+    throw new Error(`Google Drive file upload failed (${uploadResp.status}): ${text}`);
+  }
+}
+
+// ── Folder management (uses proxy — payloads are small, no size limit issue) ──
+
 async function findOrCreateFolder(
   connectors: ReplitConnectors,
   folderName: string,
-  parentId: string = 'root'
+  parentId: string = "root"
 ): Promise<string> {
   const escapedName = folderName.replace(/'/g, "\\'");
   const q = `name='${escapedName}' and '${parentId}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false`;
-  const params = new URLSearchParams({ q, fields: 'files(id,name)', spaces: 'drive' });
+  const params = new URLSearchParams({ q, fields: "files(id,name)", spaces: "drive" });
 
   const listResp = await connectors.proxy("google-drive", `/drive/v3/files?${params}`);
   const listData = await parseJsonResponse<DriveFileListResponse>(listResp, "folder list");
@@ -105,12 +166,8 @@ async function findOrCreateFolder(
   return createData.id;
 }
 
-// Walk pathParts creating/finding each nested folder, returns the leaf folder ID
-async function ensureFolderPath(
-  connectors: ReplitConnectors,
-  pathParts: string[]
-): Promise<string> {
-  let parentId = 'root';
+async function ensureFolderPath(connectors: ReplitConnectors, pathParts: string[]): Promise<string> {
+  let parentId = "root";
   for (const folderName of pathParts) {
     parentId = await findOrCreateFolder(connectors, folderName, parentId);
   }
@@ -134,41 +191,18 @@ export async function uploadFileToGoogleDrive(
 ): Promise<{ success: boolean; path: string }> {
   const connectors = await getUncachableGoogleDriveClient();
 
-  // Path structure: ACE/CustomerName/Dept/WorkOrderNumber
+  // Build the folder path using the proxy (small payloads — no size limit issue)
   const sanitizedCustomerName = sanitizeCustomerName(customerName);
-  const pathParts = ['ACE', sanitizedCustomerName, dept, workOrderNumber];
+  const pathParts = ["ACE", sanitizedCustomerName, dept, workOrderNumber];
   const folderId = await ensureFolderPath(connectors, pathParts);
 
-  // Build a multipart/related body: metadata part + binary part
-  const boundary = 'gdrive_upload_' + Date.now();
-  const mimeType = getMimeType(fileName);
-  const metadata = JSON.stringify({ name: fileName, parents: [folderId] });
-
-  const metadataPart = Buffer.from(
-    `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${metadata}\r\n`,
-    'utf8'
-  );
-  const mediaHeader = Buffer.from(
-    `--${boundary}\r\nContent-Type: ${mimeType}\r\n\r\n`,
-    'utf8'
-  );
-  const closingPart = Buffer.from(`\r\n--${boundary}--`, 'utf8');
-  const multipartBody = Buffer.concat([metadataPart, mediaHeader, fileBuffer, closingPart]);
-
-  const uploadResp = await connectors.proxy(
-    "google-drive",
-    "/upload/drive/v3/files?uploadType=multipart&fields=id,name",
-    {
-      method: "POST",
-      headers: { "Content-Type": `multipart/related; boundary=${boundary}` },
-      body: multipartBody,
-    }
-  );
-  await parseJsonResponse<DriveFileCreateResponse>(uploadResp, "file upload");
+  // Upload using the resumable protocol so large image files bypass the proxy
+  // size limit (see uploadViaResumable for the rationale)
+  await uploadViaResumable(connectors, folderId, fileName, fileBuffer);
 
   return {
     success: true,
-    path: `${pathParts.join('/')}/${fileName}`,
+    path: `${pathParts.join("/")}/${fileName}`,
   };
 }
 
@@ -187,20 +221,20 @@ export async function checkForNewExcelFile(): Promise<ExcelCheckResult> {
     const connectors = await getUncachableGoogleDriveClient();
 
     // KSAlert folder ID provided by user
-    const folderId = '1ixVvva0yj1FyytYBjj0DRuPNT4i76H76';
+    const folderId = "1ixVvva0yj1FyytYBjj0DRuPNT4i76H76";
     const q = `'${folderId}' in parents and mimeType='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' and trashed=false`;
     const params = new URLSearchParams({
       q,
-      fields: 'files(id,name,createdTime,modifiedTime)',
-      orderBy: 'modifiedTime desc',
-      spaces: 'drive',
+      fields: "files(id,name,createdTime,modifiedTime)",
+      orderBy: "modifiedTime desc",
+      spaces: "drive",
     });
 
     const listResp = await connectors.proxy("google-drive", `/drive/v3/files?${params}`);
     const listData = await parseJsonResponse<DriveFileListResponse>(listResp, "Excel file list");
 
     if (!listData.files || listData.files.length === 0) {
-      return { success: false, message: 'No Excel files found in KSAlert folder' };
+      return { success: false, message: "No Excel files found in KSAlert folder" };
     }
 
     // Filter files matching YYYYMMDD.xlsx pattern
@@ -212,19 +246,20 @@ export async function checkForNewExcelFile(): Promise<ExcelCheckResult> {
     if (validFiles.length === 0) {
       return {
         success: false,
-        message: 'No files matching YYYYMMDD.xlsx pattern found in KSAlert folder',
+        message: "No files matching YYYYMMDD.xlsx pattern found in KSAlert folder",
       };
     }
 
     // Sort by the date in filename (newest first)
     validFiles.sort((a: DriveFile, b: DriveFile) =>
-      b.name.replace('.xlsx', '').localeCompare(a.name.replace('.xlsx', ''))
+      b.name.replace(".xlsx", "").localeCompare(a.name.replace(".xlsx", ""))
     );
 
     const latestFile = validFiles[0];
     const originalFileName = latestFile.name;
 
-    // Download file content
+    // Download file content via proxy (download is fine — the size limit only
+    // affects request bodies, not response bodies)
     const downloadResp = await connectors.proxy(
       "google-drive",
       `/drive/v3/files/${encodeURIComponent(latestFile.id)}?alt=media`
@@ -243,11 +278,11 @@ export async function checkForNewExcelFile(): Promise<ExcelCheckResult> {
 
     const __filename = fileURLToPath(import.meta.url);
     const __dirname = dirname(__filename);
-    const filePath = join(__dirname, '..', 'attached_assets', newFileName);
+    const filePath = join(__dirname, "..", "attached_assets", newFileName);
     writeFileSync(filePath, buffer);
 
     // Format date from YYYYMMDD filename
-    const fileDate = originalFileName.replace('.xlsx', '');
+    const fileDate = originalFileName.replace(".xlsx", "");
     const formattedDate = `${fileDate.slice(0, 4)}-${fileDate.slice(4, 6)}-${fileDate.slice(6, 8)}`;
 
     return {
@@ -259,7 +294,7 @@ export async function checkForNewExcelFile(): Promise<ExcelCheckResult> {
     };
   } catch (error: unknown) {
     const errorMessage = error instanceof Error ? error.message : String(error);
-    console.error('Error checking Google Drive for Excel file:', errorMessage);
+    console.error("Error checking Google Drive for Excel file:", errorMessage);
     return {
       success: false,
       message: errorMessage,

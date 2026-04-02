@@ -8,6 +8,16 @@ This is a work order management application designed for Android tablets that en
 
 ## Recent Changes
 
+**Google Drive Upload Fix — Resumable Protocol (April 2, 2026)**
+- Fixed HTTP 413 "Request Entity Too Large" error when uploading images through the Replit connectors proxy
+- The proxy's nginx request-body size limit blocked multipart uploads with large image files
+- New approach in `server/gdrive.ts`: resumable upload protocol splits the work into two steps:
+  1. A tiny initiation POST (just JSON metadata) goes through the proxy → Google returns a pre-authenticated session URI in the `Location` header
+  2. The actual file bytes are PUT directly to that session URI, bypassing the proxy entirely
+- No OAuth token extraction needed — the session URI is itself the credential (issued by Google)
+- Folder operations (`findOrCreateFolder`, `ensureFolderPath`) continue using the proxy (small payloads, unaffected)
+- `googleapis` dependency removed from `server/gdrive.ts` imports (no longer needed)
+
 **Google Drive Integration Fix (April 2, 2026)**
 - Replaced manual OAuth token-fetching pattern in `server/gdrive.ts` with `@replit/connectors-sdk`
 - The old code cached the access token and broke when it expired ("Google Drive not connected")
