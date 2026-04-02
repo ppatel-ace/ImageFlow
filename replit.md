@@ -6,6 +6,15 @@ This is a work order management application designed for Android tablets that en
 
 **Multiple Photo Capture**: Users can now capture multiple photos before uploading. Photos are displayed in a gallery with thumbnails, and users can remove individual images or clear all at once before proceeding with upload/save operations.
 
+## Recent Changes
+
+**Google Drive Integration Fix (April 2, 2026)**
+- Replaced manual OAuth token-fetching pattern in `server/gdrive.ts` with `@replit/connectors-sdk`
+- The old code cached the access token and broke when it expired ("Google Drive not connected")
+- New code uses `ReplitConnectors.proxy("google-drive", ...)` which handles token refresh automatically
+- All three functions retain the same signatures: `uploadFileToGoogleDrive`, `checkForNewExcelFile`, `getUncachableGoogleDriveClient`
+- No changes required to `server/routes.ts` or `server/scheduler.ts`
+
 ## Recent Performance Optimizations
 
 **Code Efficiency Improvements (October 18, 2025)**
