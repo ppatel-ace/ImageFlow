@@ -36,17 +36,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error: any) {
       console.error("Google Drive upload error:", error);
       
-      if (error.message.includes('not connected') || error.message.includes('Authentication required')) {
-        return res.status(401).json({ 
+      const msg: string = error.message || "";
+      const isAuthFailure =
+        msg.includes('not connected') ||
+        msg.includes('Authentication required') ||
+        msg.includes('Token refresh failed') ||
+        msg.includes('Connection is error') ||
+        msg.includes('invalid_grant') ||
+        msg.includes('UNAUTHORIZED');
+
+      if (isAuthFailure) {
+        return res.status(401).json({
           error: "Google Drive not connected",
-          message: error.message,
-          requiresAuth: true
+          message: "Google Drive authorization has expired or been revoked. Please reconnect Google Drive in Replit's Integrations panel and try again.",
+          requiresAuth: true,
         });
       }
 
-      res.status(500).json({ 
-        error: "Upload failed", 
-        message: error.message 
+      res.status(500).json({
+        error: "Upload failed",
+        message: msg || "Unknown upload error",
       });
     }
   });

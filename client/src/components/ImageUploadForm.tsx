@@ -293,13 +293,15 @@ export default function ImageUploadForm() {
     
     try {
       let uploadedCount = 0;
-      
+      let lastErrorMessage = "";
+      let authErrorEncountered = false;
+
       for (let i = 0; i < capturedImages.length; i++) {
         const image = capturedImages[i];
         const ext = image.file.name.split('.').pop() || 'jpg';
         const filename = generateFilename(ext);
         const imageName = filename.substring(0, filename.lastIndexOf('.')); // Remove extension for API
-        
+
         const formData = new FormData();
         formData.append("imageFile", image.file);
         formData.append("customerName", customerName);
@@ -313,20 +315,24 @@ export default function ImageUploadForm() {
             body: formData,
           });
 
-          const result = await response.json();
+          const result = await response.json().catch(() => ({} as any));
 
-          if (!response.ok && result.requiresAuth) {
-            toast({
-              title: "Google Drive Not Connected",
-              description: "Please connect your Google Drive account in the Integrations panel to upload files.",
-              variant: "destructive",
-            });
-            throw new Error(result.message);
+          if (response.ok) {
+            uploadedCount++;
+            continue;
           }
-          
-          if (response.ok) uploadedCount++;
+
+          // Capture the actual server-reported reason so we can surface it below
+          lastErrorMessage = result?.message || result?.error || `HTTP ${response.status}`;
+          if (result?.requiresAuth) {
+            authErrorEncountered = true;
+            // Auth issue won't recover by retrying the remaining files — stop early
+            break;
+          }
         } catch (err: any) {
-          console.error(`Image ${i + 1} upload failed:`, err.message);
+          // Network-level failure (the fetch itself never reached the server)
+          lastErrorMessage = "Could not reach the server. Please check your internet connection.";
+          console.error(`Image ${i + 1} upload failed:`, err?.message);
         }
       }
 
@@ -340,22 +346,28 @@ export default function ImageUploadForm() {
         setTimeout(() => {
           setGdriveSuccess(false);
         }, 2000);
-      } else if (uploadedCount === 0) {
+      } else if (authErrorEncountered) {
+        toast({
+          title: "Google Drive Not Connected",
+          description:
+            lastErrorMessage ||
+            "Google Drive authorization has expired. Please reconnect Google Drive in Replit's Integrations panel.",
+          variant: "destructive",
+        });
+      } else {
         toast({
           title: "Upload Failed",
-          description: "Could not upload any images. Please check your connection and try again.",
+          description: lastErrorMessage || "Could not upload any images.",
           variant: "destructive",
         });
       }
     } catch (error: any) {
       console.error("Google Drive upload error:", error);
-      if (!error.message.includes('not connected')) {
-        toast({
-          title: "Upload Failed",
-          description: error.message || "An error occurred while uploading to Google Drive.",
-          variant: "destructive",
-        });
-      }
+      toast({
+        title: "Upload Failed",
+        description: error?.message || "An error occurred while uploading to Google Drive.",
+        variant: "destructive",
+      });
     } finally {
       setIsUploadingGdrive(false);
     }
