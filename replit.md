@@ -2,37 +2,7 @@
 
 ## Overview
 
-This is a work order management application designed for Android tablets that enables users to capture and upload images to Google Drive with automatic folder organization. The app allows users to associate images with specific customers and work orders, creating an organized file structure. Built with a modern React frontend and Express backend, the application emphasizes touch-friendly interactions optimized for tablet use.
-
-**Multiple Photo Capture**: Users can now capture multiple photos before uploading. Photos are displayed in a gallery with thumbnails, and users can remove individual images or clear all at once before proceeding with upload/save operations.
-
-## Recent Changes
-
-**Google Drive Upload Fix — Resumable Protocol (April 2, 2026)**
-- Fixed HTTP 413 "Request Entity Too Large" error when uploading images through the Replit connectors proxy
-- The proxy's nginx request-body size limit blocked multipart uploads with large image files
-- New approach in `server/gdrive.ts`: resumable upload protocol splits the work into two steps:
-  1. A tiny initiation POST (just JSON metadata) goes through the proxy → Google returns a pre-authenticated session URI in the `Location` header
-  2. The actual file bytes are PUT directly to that session URI, bypassing the proxy entirely
-- No OAuth token extraction needed — the session URI is itself the credential (issued by Google)
-- Folder operations (`findOrCreateFolder`, `ensureFolderPath`) continue using the proxy (small payloads, unaffected)
-- `googleapis` dependency removed from `server/gdrive.ts` imports (no longer needed)
-
-**Google Drive Integration Fix (April 2, 2026)**
-- Replaced manual OAuth token-fetching pattern in `server/gdrive.ts` with `@replit/connectors-sdk`
-- The old code cached the access token and broke when it expired ("Google Drive not connected")
-- New code uses `ReplitConnectors.proxy("google-drive", ...)` which handles token refresh automatically
-- All three functions retain the same signatures: `uploadFileToGoogleDrive`, `checkForNewExcelFile`, `getUncachableGoogleDriveClient`
-- No changes required to `server/routes.ts` or `server/scheduler.ts`
-
-## Recent Performance Optimizations
-
-**Code Efficiency Improvements (October 18, 2025)**
-- Consolidated form state watchers: Reduced multiple `form.watch()` calls to a single destructured call, improving performance
-- Extracted filename generation logic: Created `generateFilename()` helper function to eliminate repeated sanitization in loops
-- Streamlined local save logic: Simplified folder creation using promise chaining
-- Optimized upload error handling: Removed unnecessary error tracking array, simplified to count-based validation
-- All optimizations maintain existing functionality while reducing code duplication and improving readability
+Ace Image Organizer is an Android tablet-optimized work order management application. It enables users to capture and upload images to Google Drive, automatically organizing them into customer and work order specific folders. The application aims to streamline image management for technicians, ensuring organized documentation of work performed.
 
 ## User Preferences
 
@@ -43,194 +13,112 @@ Preferred communication style: Simple, everyday language.
 ### Frontend Architecture
 
 **Framework & Tooling**
-- React 18 with TypeScript for type-safe component development
-- Vite as the build tool and development server for fast hot module replacement
-- Wouter for client-side routing (lightweight alternative to React Router)
-- TanStack Query for server state management and data fetching
+- React 18 with TypeScript
+- Vite for building and development
+- Wouter for client-side routing
+- TanStack Query for server state management
 
 **UI Design System**
-- Material Design 3 principles adapted for tablet-optimized touch interactions
-- Shadcn/ui component library with Radix UI primitives for accessible, customizable components
-- Tailwind CSS for utility-first styling with custom design tokens
-- "New York" style variant from Shadcn configured for consistent visual language
-- Custom color system supporting light and dark modes with HSL-based theming
-- Touch-friendly minimum target sizes (48px height for interactive elements)
+- Material Design 3 principles adapted for tablet touch interactions
+- Shadcn/ui component library with Radix UI primitives
+- Tailwind CSS for styling with custom design tokens and "New York" style variant
+- Custom HSL-based color system supporting light and dark modes
+- Touch-friendly minimum target sizes (48px for interactive elements)
 
 **Form Management**
 - React Hook Form for performant form state management
-- Zod schema validation integrated via @hookform/resolvers
-- Local storage persistence for user-entered fields: Dept and Work Order Number
-- Real-time localStorage sync: Dept field saves automatically on change
-- Work Order autocomplete: Supports both manual typing AND dropdown selection from Excel-loaded work orders
-  - Popover + Command component for instant dropdown on focus/typing
-  - Real-time filtering as user types
-  - Accepts custom work orders not in the Excel file
-  - Automatically clears Part #, Rev, and Customer Name when work order changes
-- Part Number auto-selection: When a work order has only ONE part number option, it is automatically selected
-  - Auto-fills Part #, Rev, and Customer Name fields when single option exists
-  - Improves user experience by reducing clicks for single-option work orders
-  - When multiple part numbers exist, user must manually select from dropdown
-- Rev and Customer Name fields: Read-only, auto-filled from Excel data based on selected Part #
+- Zod for schema validation
+- Local storage persistence for Dept and Work Order Number
+- Work Order autocomplete with real-time filtering and support for custom entries
+- Automatic selection of Part Number, Rev, and Customer Name when a work order has a single part number option
+- Read-only Rev and Customer Name fields auto-filled from Excel data
 
 **State Management Pattern**
-- React Context for theme management (light/dark mode)
-- TanStack Query for server state with disabled refetching (staleTime: Infinity)
-- Local component state for UI interactions and form handling
+- React Context for theme management
+- TanStack Query for server state
+- Local component state for UI interactions
 
 ### Backend Architecture
 
 **Server Framework**
 - Express.js with TypeScript for RESTful API endpoints
-- Custom middleware for request/response logging with timing metrics
-- Development-only Vite integration for HMR during development
-- Production builds use esbuild for server bundling
-- Environment-based configuration: NODE_ENV determines dev vs production behavior
-- Dynamic imports prevent Vite dependencies from being bundled in production
-- Static file serving in production without Vite overhead
-- **Scheduled Tasks**: node-cron for server-side scheduled jobs (Excel updates at 7:20 AM EST/EDT daily)
+- Custom middleware for request/response logging
+- `node-cron` for scheduled tasks (daily Excel updates at 7:20 AM EST/EDT)
 
 **Storage Layer**
-- Abstracted storage interface (IStorage) allowing multiple implementations
-- Current implementation: In-memory storage (MemStorage) using JavaScript Maps
+- Abstracted storage interface with current in-memory implementation (MemStorage)
 - Drizzle ORM configured with PostgreSQL dialect for future database integration
-- Schema defines user model with UUID primary keys
 
 **File Structure**
-- `/server` - Backend API routes and business logic
-- `/client` - React frontend application
-- `/shared` - Shared types and schemas accessible to both frontend and backend
-- Path aliases configured for clean imports (@/, @shared/, @assets/)
+- `/server` for backend logic
+- `/client` for React frontend
+- `/shared` for shared types and schemas
+- Path aliases for clean imports
 
 ### Design Decisions
 
 **Responsive Design (Mobile & Tablet)**
-- Responsive breakpoints: Mobile (<640px), Tablet/Desktop (≥640px)
-- Mobile: Buttons stack vertically, compact spacing (px-3, min-h-12), smaller text (text-base)
-- Tablet: Buttons display horizontally, generous spacing (px-4-6, min-h-14), larger text (text-lg)
-- Adaptive typography: Scales from base sizes on mobile to larger sizes on tablet
-- Touch-friendly targets: 48px minimum height on mobile, 56px on tablet
-- Button groups use flex-col on mobile, flex-row on tablet for optimal layout
-- Folder paths use break-all for text wrapping on small screens
-- Header elements scale appropriately (logo, title, spacing) across devices
+- Adaptive layouts and typography based on screen size
+- Touch-friendly target sizes (48px on mobile, 56px on tablet)
 
 **Theme System**
 - CSS custom properties for dynamic theming
 - HSL color format for programmatic color manipulation
-- Separate light/dark mode palettes with carefully chosen contrast ratios
-- Primary blue (220° hue) for professional, trustworthy appearance
-- Success green (142° hue) and error red (0° hue) for status feedback
+- Separate light/dark mode palettes with optimized contrast ratios
 
 **Image Upload Flow**
-- **Hybrid Camera System**: Device-adaptive camera experience
-  - **Android Devices** (Primary users - technicians with tablets):
-    - Custom camera screen with full-screen live preview
-    - Vertical zoom slider (1x to 3x) on the right side
-    - Horizontal brightness slider (50% to 150%) at the bottom
-    - Large circular capture button for easy tablet use
-    - Button text: "Open Camera"
-  - **iOS Devices** (iPhone users via browser):
-    - Native iOS camera app integration via file input
-    - Uses Apple's built-in zoom (pinch gesture) and exposure controls
-    - Button text: "Take Photo"
-  - Device detection via user agent (client/src/lib/deviceDetection.ts)
-  - Custom camera component (client/src/components/CustomCamera.tsx)
-- **Multiple photo capture**: Users can take/select multiple photos before uploading
-  - Images stored in `capturedImages` array with `{ id, file, preview }` structure
-  - Each image has unique ID generated with `Date.now() + Math.random()`
-  - Gallery displays thumbnails in 2-column grid (mobile) or 3-column grid (tablet/desktop)
-  - Individual image removal via hover overlay with remove button
-  - "Clear All" button removes all captured images at once
-  - Upload/Save buttons disabled until at least one image is captured
-- Image gallery UI with thumbnail previews for quality confirmation
-- Automatic file naming format: {partNumber}Rev{rev}-{timestamp}.{extension} (e.g., ABC123RevA-20250108-151500-123.jpg)
-  - Timestamp includes milliseconds to prevent file name conflicts
-- Folder structure: ACE/CustomerName/Dept/WorkOrderNumber
-- Path and filename sanitization: Invalid characters (< > : " / \ | ? *) replaced with "_"
-  - Applied to Customer Name in folder paths (server/sharepoint.ts, client)
-  - Applied to Part # and Rev in filenames (client/src/components/ImageUploadForm.tsx)
-  - Sanitization occurs in Google Drive uploads, SharePoint uploads, and local file saves
-  - Original values preserved in UI and form data for display
-- Local save option for offline scenarios or backup purposes
-- Both local save and Google Drive upload process all captured images sequentially
+- **Hybrid Camera System**:
+  - Android: Custom camera screen with zoom and brightness controls, large capture button.
+  - iOS: Native camera app integration via file input.
+- **Multiple photo capture**: Users can capture multiple photos before uploading.
+  - Images displayed in a gallery with thumbnails.
+  - Option to remove individual images or clear all.
+- Automatic file naming: `{partNumber}Rev{rev}-{timestamp}.{extension}`
+- Folder structure: `ACE/CustomerName/Dept/WorkOrderNumber`
+- Path and filename sanitization to replace invalid characters
+- Local save option for offline use
+- Error reporting for Google Drive auth failures is enhanced to provide clear "reconnect Google Drive" messages.
+- Google Drive uploads now use a resumable protocol to handle large files, bypassing proxy size limits.
 
 **Excel Data Updates via Google Drive**
-- Automatic Excel file updates from Google Drive KSAlert folder
-- Folder ID: 1ixVvva0yj1FyytYBjj0DRuPNT4i76H76 (owned by aceelectronics385@gmail.com)
-- File naming pattern: YYYYMMDD.xlsx (e.g., 20251101.xlsx)
-- **Server-Side Automatic Updates (Always Running)**:
-  - **Primary**: Server-side cron job runs at 7:20 AM EST/EDT daily using node-cron
-  - Runs automatically even when no one is using the app
-  - Initial update check runs 10 seconds after server startup
-  - Uses America/New_York timezone for accurate EST/EDT handling
-  - Logs all update activities to server console
-- **Client-Side Updates (When App is Open)**:
-  - Auto-check on page load (once per day, tracked via lastPageLoadCheck)
-  - Scheduled check at 7:20 AM EST/EDT if browser is open
-  - Silent auto-checks (no toast notifications if no updates found)
-- **Manual Updates**:
-  - "Check for Updates" button in UI for manual checks (shows toast notifications)
-- System searches for latest file in KSAlert folder matching YYYYMMDD.xlsx pattern
-- Downloads and saves Excel file with timestamp to attached_assets folder (OpenOrdersAllQtyOnly_{timestamp}.xlsx)
-- Automatically reloads work order data from new file
-- Uses Replit's Google Drive connector for authentication and API access
-- Files are sorted by date in filename (newest first) to find latest work order data
-
-**Development Experience**
-- TypeScript strict mode for type safety across the codebase
-- ESM modules throughout (type: "module" in package.json)
-- Incremental compilation with tsBuildInfo caching
-- Custom Vite plugins for Replit integration (cartographer, dev-banner, error modal)
+- Automatic daily Excel file updates from a specific Google Drive folder (KSAlert) at 7:20 AM EST/EDT.
+- Client-side checks on page load and scheduled checks when the app is open.
+- Manual "Check for Updates" button in UI.
+- Downloads and processes the latest Excel file to update work order data.
+- Uses Replit's Google Drive connector for authentication and API access.
 
 ## External Dependencies
 
 ### Third-Party Services
 
 **Cloud Storage API Integration**
-- `@microsoft/microsoft-graph-client` (v3.0.7) for SharePoint API communication (if needed)
-- `googleapis` (v148.0.0) for Google Drive API communication
-- Handles file uploads and folder management in Google Drive
-- Google Drive: Uses Replit's Google Drive connector for OAuth authentication (fully implemented) - aceelectronics385@gmail.com
-- Files uploaded with Customer Name/Work Order Number folder structure
+- `googleapis` for Google Drive API communication for file uploads and folder management.
+- Uses Replit's Google Drive connector for OAuth authentication.
 
 ### Database
 
 **PostgreSQL (via Neon)**
-- `@neondatabase/serverless` (v0.10.4) for serverless PostgreSQL connections
-- Drizzle ORM (v0.39.1) with `drizzle-zod` for schema-to-validation integration
-- Migration system configured with `drizzle-kit` (output: ./migrations)
-- Connection string expected via `DATABASE_URL` environment variable
+- `@neondatabase/serverless` for serverless PostgreSQL connections.
+- Drizzle ORM for database interactions.
 
 ### UI Component Libraries
 
-**Radix UI Primitives** (v1.x-v2.x)
-- Unstyled, accessible component primitives (accordion, dialog, dropdown, select, etc.)
-- 20+ components installed for comprehensive UI coverage
-- Composable architecture allows custom styling while maintaining accessibility
-
-**Additional UI Dependencies**
-- `cmdk` for command palette/search functionality
-- `date-fns` for date formatting and manipulation
-- `lucide-react` for icon system (imported in multiple components)
-- `vaul` for drawer/bottom sheet components
-- `input-otp` for one-time password inputs
-- `recharts` for data visualization (chart component configured)
-- `react-day-picker` for calendar/date picker functionality
-- `embla-carousel-react` for carousel/image gallery components
+- Radix UI Primitives for accessible, unstyled UI components.
+- `cmdk` for command palette functionality.
+- `date-fns` for date manipulation.
+- `lucide-react` for icons.
+- `vaul` for drawer components.
+- `input-otp` for OTP inputs.
+- `recharts` for data visualization.
+- `react-day-picker` for calendar/date picking.
+- `embla-carousel-react` for carousels.
 
 ### Styling & Utilities
 
-- `tailwindcss` with `autoprefixer` for cross-browser CSS compatibility
-- `class-variance-authority` for type-safe variant styling
-- `clsx` and `tailwind-merge` for conditional className composition
+- `tailwindcss` for utility-first styling.
+- `class-variance-authority` for type-safe variant styling.
+- `clsx` and `tailwind-merge` for conditional class names.
 
 ### Session Management
 
-- `connect-pg-simple` (v10.0.0) for PostgreSQL session storage
-- Configured for Express session management (implementation pending)
-
-### Development Tools
-
-- `@replit/vite-plugin-*` suite for Replit development environment integration
-- `tsx` for TypeScript execution in development
-- `esbuild` for production server bundling
-- `@jridgewell/trace-mapping` for source map support
+- `connect-pg-simple` for PostgreSQL session storage with Express.
