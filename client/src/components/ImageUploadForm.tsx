@@ -185,16 +185,6 @@ export default function ImageUploadForm() {
     reader.readAsDataURL(file);
   };
 
-  const handleTakePhotoClick = () => {
-    // Use custom camera for Android, native camera for iOS
-    if (shouldUseCustomCamera()) {
-      setShowCustomCamera(true);
-    } else {
-      // Use native camera input for iOS
-      document.getElementById("camera-input")?.click();
-    }
-  };
-
   const removeImage = (imageId: string) => {
     setCapturedImages(prev => prev.filter(img => img.id !== imageId));
   };
@@ -818,18 +808,34 @@ export default function ImageUploadForm() {
                   id="gallery-input"
                   data-testid="input-gallery"
                 />
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="lg"
-                  className="w-full sm:flex-1 min-h-12 sm:min-h-14"
-                  onClick={handleTakePhotoClick}
-                  disabled={!workOrderMatches}
-                  data-testid="button-camera"
-                >
-                  <Camera className="w-5 h-5 mr-2" />
-                  {shouldUseCustomCamera() ? "Open Camera" : "Take Photo"}
-                </Button>
+                {shouldUseCustomCamera() ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="lg"
+                    className="w-full sm:flex-1 min-h-12 sm:min-h-14"
+                    onClick={() => setShowCustomCamera(true)}
+                    disabled={!workOrderMatches}
+                    data-testid="button-camera"
+                  >
+                    <Camera className="w-5 h-5 mr-2" />
+                    Open Camera
+                  </Button>
+                ) : (
+                  <label
+                    htmlFor={workOrderMatches ? "camera-input" : undefined}
+                    data-testid="button-camera"
+                    className={cn(
+                      "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+                      "border border-input bg-background hover:bg-accent hover:text-accent-foreground",
+                      "w-full sm:flex-1 min-h-12 sm:min-h-14 px-8 cursor-pointer",
+                      !workOrderMatches && "opacity-50 pointer-events-none cursor-not-allowed"
+                    )}
+                  >
+                    <Camera className="w-5 h-5 mr-2" />
+                    Take Photo
+                  </label>
+                )}
                 <Button
                   type="button"
                   variant="outline"
