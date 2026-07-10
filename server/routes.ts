@@ -103,7 +103,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // Reload Excel data with the new file
-      const reloadResult = reloadExcelData();
+      const reloadResult = await reloadExcelData();
       
       if (!reloadResult.success) {
         return res.status(500).json({

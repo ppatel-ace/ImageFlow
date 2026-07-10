@@ -35,7 +35,7 @@ export function initializeScheduler() {
       console.log(`[Scheduler] New Excel file found: ${driveResult.originalFileName}`);
       
       // Reload Excel data with the new file
-      const reloadResult = reloadExcelData();
+      const reloadResult = await reloadExcelData();
       
       if (!reloadResult.success) {
         console.error(`[Scheduler] Failed to reload Excel data: ${reloadResult.error}`);
@@ -60,7 +60,7 @@ export function initializeScheduler() {
       const driveResult = await checkForNewExcelFile();
       
       if (driveResult.success) {
-        const reloadResult = reloadExcelData();
+        const reloadResult = await reloadExcelData();
         if (reloadResult.success) {
           console.log(`[Scheduler] ✓ Initial update successful: ${driveResult.originalFileName}`);
         }
