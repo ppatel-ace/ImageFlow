@@ -1,12 +1,13 @@
 FROM node:20-bookworm-slim AS build
 WORKDIR /app
+ENV NODE_ENV=development
 COPY package.json package-lock.json* ./
 RUN npm config set fetch-retries 5 && \
     npm config set fetch-retry-mintimeout 20000 && \
     npm config set fetch-retry-maxtimeout 120000 && \
-    npm install --no-audit --no-fund
+    npm install --include=dev --no-audit --no-fund
 COPY . .
-RUN npm run build
+RUN ls node_modules/.bin/vite && npm run build
 
 FROM node:20-bookworm-slim AS runtime
 WORKDIR /app

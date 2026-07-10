@@ -1,0 +1,1 @@
+- [Docker build for this app](docker-build-notes.md) — vite (devDependency) must be force-installed with explicit NODE_ENV=development + --include=dev in the build stage or the Docker build silently produces "vite: not found".
