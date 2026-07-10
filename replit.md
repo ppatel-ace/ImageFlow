@@ -8,6 +8,27 @@ Ace Image Organizer is an Android tablet-optimized work order management applica
 
 Preferred communication style: Simple, everyday language.
 
+## Self-Hosted Deployment (Portainer / Docker)
+
+The target Docker host (managed by an external datacenter) has no reliable outbound access to the npm registry, so `docker build` cannot run `npm install` there — every attempt timed out after ~500s. To work around this, the Docker image is built from pre-installed dependencies and a pre-built `dist/` folder committed to the repo under `deploy_vendor/` (`deploy_vendor/node_modules`, `deploy_vendor/dist`). The `Dockerfile` only copies these in — it never calls `npm install`.
+
+**Whenever dependencies change or the app is rebuilt, `deploy_vendor/` must be regenerated from Replit before redeploying:**
+```
+rm -rf deploy_vendor
+mkdir -p deploy_vendor
+cp -r node_modules deploy_vendor/node_modules
+cp package.json package-lock.json deploy_vendor/
+cd deploy_vendor && npm prune --omit=dev && cd ..
+npm run build
+rm -rf deploy_vendor/dist
+cp -r dist deploy_vendor/dist
+```
+Then commit and push `deploy_vendor/` along with the rest of the changes.
+
+- `docker-compose.yml` publishes the app on host port **8095** → container port 5000, on an isolated subnet (172.28.55.0/24) chosen to avoid collisions with existing stacks.
+- No environment variables are strictly required to boot (in-memory storage, no DB).
+- Google Drive uploads and the Excel auto-update job will NOT work in this deployment yet — they depend on Replit's proprietary connector system (`server/gdrive.ts`, `server/sharepoint.ts`), which has no equivalent outside Replit. This needs to be replaced with a Google Service Account before Drive functionality works outside Replit.
+
 ## System Architecture
 
 ### Frontend Architecture
