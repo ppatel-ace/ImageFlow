@@ -1,0 +1,25 @@
+version: "3.9"
+
+services:
+  ace-image-organizer:
+    build: .
+    image: ace-image-organizer:latest
+    container_name: ace-image-organizer
+    restart: unless-stopped
+    ports:
+      - "8095:5000"
+    environment:
+      NODE_ENV: production
+      PORT: "5000"
+    env_file:
+      - .env
+    networks:
+      ace-image-organizer-net:
+        ipv4_address: 172.28.55.10
+
+networks:
+  ace-image-organizer-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.55.0/24
