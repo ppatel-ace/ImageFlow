@@ -1,0 +1,49 @@
+#8 [ace-image-organizer build 3/6] COPY package.json package-lock.json* ./
+
+
+
+D
+
+#9 [ace-image-organizer build 4/6] RUN npm config set fetch-retries 5 &&     npm config set fetch-retry-mintimeout 20000 &&     npm config set fetch-retry-maxtimeout 120000 &&     npm install --include=dev --no-audit --no-fund
+
+#9 6.651 npm warn deprecated node-domexception@1.0.0: Use your platform's native DOMException instead
+
+#9 7.701 npm warn deprecated @esbuild-kit/esm-loader@2.6.5: Merged into tsx: https://tsx.is
+
+#9 7.736 npm warn deprecated @esbuild-kit/core-utils@3.3.2: Merged into tsx: https://tsx.is
+
+2026/07/10 03:21PM ERR github.com/portainer/portainer/api/scheduler/scheduler.go:119 > job returned an error, it will be rescheduled | error="failed to fetch latest commit id of stack:82: failed to list repository refs: authentication required: Invalid username or token. Password authentication is not supported for Git operations."
+
+2026/07/10 03:26PM ERR github.com/portainer/portainer/api/scheduler/scheduler.go:119 > job returned an error, it will be rescheduled | error="failed to fetch latest commit id of stack:82: failed to list repository refs: authentication required: Invalid username or token. Password authentication is not supported for Git operations."
+
+#9 504.3 npm error Exit handler never called!
+
+#9 504.3 npm error This is an error with npm itself. Please report this error at:
+
+#9 504.3 npm error   <https://github.com/npm/cli/issues>
+
+#9 504.3 npm error A complete log of this run can be found in: /root/.npm/_logs/2026-07-10T15_19_08_623Z-debug-0.log
+
+#9 DONE 504.5s
+
+#10 [ace-image-organizer build 5/6] COPY . .
+
+#10 DONE 0.2s
+
+#11 [ace-image-organizer build 6/6] RUN ls node_modules/.bin/vite && npm run build
+
+#11 0.209 ls: cannot access 'node_modules/.bin/vite': No such file or directory
+
+#11 ERROR: process "/bin/sh -c ls node_modules/.bin/vite && npm run build" did not complete successfully: exit code: 2
+
+------
+
+ > [ace-image-organizer build 6/6] RUN ls node_modules/.bin/vite && npm run build:
+
+0.209 ls: cannot access 'node_modules/.bin/vite': No such file or directory
+
+------
+
+2026/07/10 03:27PM INF github.com/portainer/portainer/pkg/libstack/compose/logwriter.go:55 > level=warning msg="Warning: No resource found to remove for project \"imageflow\"." |
+
+2026/07/10 03:27PM INF github.com/portainer/portainer/pkg/libstack/compose/composeplugin.go:209 > Stack removal successful |

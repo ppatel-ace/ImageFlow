@@ -1,6 +1,7 @@
 FROM node:20-bookworm-slim AS build
 WORKDIR /app
 ENV NODE_ENV=development
+ENV NODE_OPTIONS=--dns-result-order=ipv4first
 COPY package.json package-lock.json* ./
 RUN npm config set fetch-retries 5 && \
     npm config set fetch-retry-mintimeout 20000 && \
@@ -12,6 +13,7 @@ RUN ls node_modules/.bin/vite && npm run build
 FROM node:20-bookworm-slim AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
+ENV NODE_OPTIONS=--dns-result-order=ipv4first
 COPY package.json package-lock.json* ./
 RUN npm config set fetch-retries 5 && \
     npm config set fetch-retry-mintimeout 20000 && \
