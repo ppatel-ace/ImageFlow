@@ -220,8 +220,46 @@ export interface ExcelCheckResult {
   error?: string;
 }
 
+let excelDriveUnavailableLogged = false;
+
+/**
+ * Excel auto-update uses Replit Google Drive connectors.
+ * Production (SharePoint images) typically has neither Replit identity nor Drive —
+ * skip cleanly unless explicitly enabled or Replit env is present.
+ */
+export function isExcelDriveSyncAvailable(): boolean {
+  const flag = process.env.ENABLE_EXCEL_DRIVE_SYNC?.trim().toLowerCase();
+  if (flag === "0" || flag === "false" || flag === "off" || flag === "no") {
+    return false;
+  }
+  if (flag === "1" || flag === "true" || flag === "on" || flag === "yes") {
+    return true;
+  }
+  return Boolean(process.env.REPL_IDENTITY || process.env.WEB_REPL_RENEWAL);
+}
+
+function isReplitIdentityError(message: string): boolean {
+  return message.includes("Replit identity token not found");
+}
+
+function warnExcelDriveUnavailableOnce(message: string): void {
+  if (excelDriveUnavailableLogged) return;
+  excelDriveUnavailableLogged = true;
+  console.warn(`[gdrive] ${message}`);
+}
+
 // Check KSAlert folder for new Excel files with YYYYMMDD.xlsx naming pattern
 export async function checkForNewExcelFile(): Promise<ExcelCheckResult> {
+  if (!isExcelDriveSyncAvailable()) {
+    warnExcelDriveUnavailableOnce(
+      "Excel Drive sync disabled — Replit connectors not configured (SharePoint handles image uploads). Mount an Excel file under attached_assets, or set REPL_IDENTITY/WEB_REPL_RENEWAL / ENABLE_EXCEL_DRIVE_SYNC=true to enable Drive sync.",
+    );
+    return {
+      success: false,
+      message: "Excel Drive sync not configured (no Replit identity)",
+    };
+  }
+
   try {
     const connectors = await getUncachableGoogleDriveClient();
 
@@ -299,7 +337,13 @@ export async function checkForNewExcelFile(): Promise<ExcelCheckResult> {
     };
   } catch (error: unknown) {
     const errorMessage = error instanceof Error ? error.message : String(error);
-    console.error("Error checking Google Drive for Excel file:", errorMessage);
+    if (isReplitIdentityError(errorMessage)) {
+      warnExcelDriveUnavailableOnce(
+        `Excel Drive sync unavailable: ${errorMessage} SharePoint image uploads are unaffected.`,
+      );
+    } else {
+      console.error("Error checking Google Drive for Excel file:", errorMessage);
+    }
     return {
       success: false,
       message: errorMessage,

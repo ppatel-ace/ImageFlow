@@ -10,27 +10,6 @@ import { ReplitConnectors } from "@replit/connectors-sdk";
 import { writeFileSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
-function sanitizeCustomerName(customerName) {
-  return customerName.replace(/[<>:"/\\|?*]/g, "_");
-}
-function getMimeType(fileName) {
-  const ext = fileName.split(".").pop()?.toLowerCase();
-  switch (ext) {
-    case "jpg":
-    case "jpeg":
-      return "image/jpeg";
-    case "png":
-      return "image/png";
-    case "gif":
-      return "image/gif";
-    case "webp":
-      return "image/webp";
-    case "heic":
-      return "image/heic";
-    default:
-      return "image/jpeg";
-  }
-}
 async function parseJsonResponse(response, context) {
   if (!response.ok) {
     const text = await response.text().catch(() => `HTTP ${response.status}`);
@@ -43,90 +22,38 @@ async function parseJsonResponse(response, context) {
   }
   return data;
 }
-async function uploadViaResumable(connectors, folderId, fileName, fileBuffer) {
-  const mimeType = getMimeType(fileName);
-  const metadata = JSON.stringify({ name: fileName, parents: [folderId] });
-  const initiateResp = await connectors.proxy(
-    "google-drive",
-    `/upload/drive/v3/files?uploadType=resumable&fields=id,name`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json; charset=UTF-8",
-        "X-Upload-Content-Type": mimeType,
-        "X-Upload-Content-Length": String(fileBuffer.length)
-      },
-      body: metadata
-    }
-  );
-  if (!initiateResp.ok) {
-    const text = await initiateResp.text().catch(() => `HTTP ${initiateResp.status}`);
-    throw new Error(`Google Drive upload initiation failed (${initiateResp.status}): ${text}`);
-  }
-  const sessionUri = initiateResp.headers.get("Location");
-  if (!sessionUri) {
-    const body = await initiateResp.text().catch(() => "(unreadable body)");
-    console.error(
-      `[gdrive] Resumable upload initiation missing Location header. Status: ${initiateResp.status}. Response headers: ${JSON.stringify(Object.fromEntries(initiateResp.headers))}. Body: ${body}`
-    );
-    throw new Error("Google Drive resumable upload: no Location header in initiation response");
-  }
-  const uploadResp = await fetch(sessionUri, {
-    method: "PUT",
-    headers: {
-      "Content-Type": mimeType,
-      "Content-Length": String(fileBuffer.length)
-    },
-    body: fileBuffer
-  });
-  if (!uploadResp.ok) {
-    const text = await uploadResp.text().catch(() => `HTTP ${uploadResp.status}`);
-    throw new Error(`Google Drive file upload failed (${uploadResp.status}): ${text}`);
-  }
-}
-async function findOrCreateFolder(connectors, folderName, parentId = "root") {
-  const escapedName = folderName.replace(/'/g, "\\'");
-  const q = `name='${escapedName}' and '${parentId}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false`;
-  const params = new URLSearchParams({ q, fields: "files(id,name)", spaces: "drive" });
-  const listResp = await connectors.proxy("google-drive", `/drive/v3/files?${params}`);
-  const listData = await parseJsonResponse(listResp, "folder list");
-  if (listData.files.length > 0) {
-    return listData.files[0].id;
-  }
-  const createResp = await connectors.proxy("google-drive", "/drive/v3/files?fields=id,name", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      name: folderName,
-      mimeType: "application/vnd.google-apps.folder",
-      parents: [parentId]
-    })
-  });
-  const createData = await parseJsonResponse(createResp, "folder create");
-  return createData.id;
-}
-async function ensureFolderPath(connectors, pathParts) {
-  let parentId = "root";
-  for (const folderName of pathParts) {
-    parentId = await findOrCreateFolder(connectors, folderName, parentId);
-  }
-  return parentId;
-}
 async function getUncachableGoogleDriveClient() {
   return new ReplitConnectors();
 }
-async function uploadFileToGoogleDrive(customerName, dept, workOrderNumber, fileName, fileBuffer) {
-  const connectors = await getUncachableGoogleDriveClient();
-  const sanitizedCustomerName = sanitizeCustomerName(customerName);
-  const pathParts = ["ACE", sanitizedCustomerName, dept, workOrderNumber];
-  const folderId = await ensureFolderPath(connectors, pathParts);
-  await uploadViaResumable(connectors, folderId, fileName, fileBuffer);
-  return {
-    success: true,
-    path: `${pathParts.join("/")}/${fileName}`
-  };
+var excelDriveUnavailableLogged = false;
+function isExcelDriveSyncAvailable() {
+  const flag = process.env.ENABLE_EXCEL_DRIVE_SYNC?.trim().toLowerCase();
+  if (flag === "0" || flag === "false" || flag === "off" || flag === "no") {
+    return false;
+  }
+  if (flag === "1" || flag === "true" || flag === "on" || flag === "yes") {
+    return true;
+  }
+  return Boolean(process.env.REPL_IDENTITY || process.env.WEB_REPL_RENEWAL);
+}
+function isReplitIdentityError(message) {
+  return message.includes("Replit identity token not found");
+}
+function warnExcelDriveUnavailableOnce(message) {
+  if (excelDriveUnavailableLogged) return;
+  excelDriveUnavailableLogged = true;
+  console.warn(`[gdrive] ${message}`);
 }
 async function checkForNewExcelFile() {
+  if (!isExcelDriveSyncAvailable()) {
+    warnExcelDriveUnavailableOnce(
+      "Excel Drive sync disabled \u2014 Replit connectors not configured (SharePoint handles image uploads). Mount an Excel file under attached_assets, or set REPL_IDENTITY/WEB_REPL_RENEWAL / ENABLE_EXCEL_DRIVE_SYNC=true to enable Drive sync."
+    );
+    return {
+      success: false,
+      message: "Excel Drive sync not configured (no Replit identity)"
+    };
+  }
   try {
     const connectors = await getUncachableGoogleDriveClient();
     const folderId = "1ixVvva0yj1FyytYBjj0DRuPNT4i76H76";
@@ -183,13 +110,164 @@ async function checkForNewExcelFile() {
     };
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
-    console.error("Error checking Google Drive for Excel file:", errorMessage);
+    if (isReplitIdentityError(errorMessage)) {
+      warnExcelDriveUnavailableOnce(
+        `Excel Drive sync unavailable: ${errorMessage} SharePoint image uploads are unaffected.`
+      );
+    } else {
+      console.error("Error checking Google Drive for Excel file:", errorMessage);
+    }
     return {
       success: false,
       message: errorMessage,
       error: errorMessage
     };
   }
+}
+
+// server/sharepoint.ts
+var tokenCache = null;
+var GRAPH_BASE = "https://graph.microsoft.us/v1.0";
+var TOKEN_URL_BASE = "https://login.microsoftonline.us";
+function sanitizePathSegment(value) {
+  return value.replace(/[<>:"/\\|?*]/g, "_");
+}
+function requireEnv(name) {
+  const v = process.env[name]?.trim();
+  if (!v) throw new Error(`Missing required env var: ${name}`);
+  return v;
+}
+async function getAccessToken() {
+  if (tokenCache && tokenCache.expiresAt > Date.now() + 6e4) {
+    return tokenCache.accessToken;
+  }
+  const tenantId = requireEnv("AZURE_TENANT_ID");
+  const clientId = requireEnv("AZURE_CLIENT_ID");
+  const clientSecret = requireEnv("AZURE_CLIENT_SECRET");
+  const body = new URLSearchParams({
+    grant_type: "client_credentials",
+    client_id: clientId,
+    client_secret: clientSecret,
+    scope: "https://graph.microsoft.us/.default"
+  });
+  const res = await fetch(`${TOKEN_URL_BASE}/${tenantId}/oauth2/v2.0/token`, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Azure token request failed (${res.status}): ${text.slice(0, 300)}`);
+  }
+  const data = await res.json();
+  if (!data.access_token) {
+    throw new Error("Azure token response missing access_token");
+  }
+  tokenCache = {
+    accessToken: data.access_token,
+    expiresAt: Date.now() + (data.expires_in ?? 3600) * 1e3
+  };
+  return tokenCache.accessToken;
+}
+async function graphFetch(path2, init = {}) {
+  const token = await getAccessToken();
+  const url = path2.startsWith("http") ? path2 : `${GRAPH_BASE}${path2}`;
+  const headers = new Headers(init.headers);
+  headers.set("Authorization", `Bearer ${token}`);
+  if (!headers.has("Content-Type") && init.body && !(init.body instanceof Buffer)) {
+    headers.set("Content-Type", "application/json");
+  }
+  return fetch(url, { ...init, headers });
+}
+async function resolveSiteId() {
+  const hostname = process.env.SHAREPOINT_SITE_HOSTNAME?.trim() || "aceelectronics.sharepoint.us";
+  const sitePath = process.env.SHAREPOINT_SITE_PATH?.trim() || "/sites/jobtravelerphotos";
+  const normalizedPath = sitePath.startsWith("/") ? sitePath : `/${sitePath}`;
+  const res = await graphFetch(
+    `/sites/${encodeURIComponent(hostname)}:${normalizedPath}`
+  );
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Failed to resolve SharePoint site (${res.status}): ${text.slice(0, 300)}`);
+  }
+  const site = await res.json();
+  if (!site.id) throw new Error("SharePoint site response missing id");
+  return site.id;
+}
+async function resolveDriveId(siteId) {
+  const configured = process.env.SHAREPOINT_DRIVE_ID?.trim();
+  if (configured) return configured;
+  const res = await graphFetch(`/sites/${siteId}/drive`);
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Failed to resolve default drive (${res.status}): ${text.slice(0, 300)}`);
+  }
+  const drive = await res.json();
+  if (!drive.id) throw new Error("SharePoint drive response missing id");
+  return drive.id;
+}
+function driveItemPath(segments) {
+  return segments.map(encodeURIComponent).join("/");
+}
+async function ensureFolderPath(driveId, folderPath) {
+  const parts = folderPath.split("/").filter(Boolean);
+  const built = [];
+  for (const part of parts) {
+    const parentSegments = [...built];
+    built.push(part);
+    const probe = await graphFetch(`/drives/${driveId}/root:/${driveItemPath(built)}`);
+    if (probe.ok) continue;
+    if (probe.status !== 404) {
+      const text = await probe.text().catch(() => "");
+      throw new Error(
+        `Failed to check folder ${built.join("/")} (${probe.status}): ${text.slice(0, 200)}`
+      );
+    }
+    const createUrl = parentSegments.length === 0 ? `/drives/${driveId}/root/children` : `/drives/${driveId}/root:/${driveItemPath(parentSegments)}:/children`;
+    const createRes = await graphFetch(createUrl, {
+      method: "POST",
+      body: JSON.stringify({
+        name: part,
+        folder: {},
+        "@microsoft.graph.conflictBehavior": "fail"
+      })
+    });
+    if (!createRes.ok && createRes.status !== 409) {
+      const text = await createRes.text().catch(() => "");
+      throw new Error(
+        `Failed to create folder ${part} (${createRes.status}): ${text.slice(0, 200)}`
+      );
+    }
+  }
+}
+async function uploadFileToSharePoint(customerName, dept, workOrderNumber, fileName, fileBuffer) {
+  const siteId = await resolveSiteId();
+  const driveId = await resolveDriveId(siteId);
+  const sanitizedCustomer = sanitizePathSegment(customerName);
+  const sanitizedDept = sanitizePathSegment(dept);
+  const sanitizedWo = sanitizePathSegment(workOrderNumber);
+  const sanitizedFile = sanitizePathSegment(fileName);
+  const folderPath = `ACE/${sanitizedCustomer}/${sanitizedDept}/${sanitizedWo}`;
+  await ensureFolderPath(driveId, folderPath);
+  const uploadPath = `/drives/${driveId}/root:/${driveItemPath([
+    ...folderPath.split("/").filter(Boolean),
+    sanitizedFile
+  ])}:/content`;
+  const uploadRes = await graphFetch(uploadPath, {
+    method: "PUT",
+    headers: { "Content-Type": "application/octet-stream" },
+    body: fileBuffer
+  });
+  if (!uploadRes.ok) {
+    const text = await uploadRes.text().catch(() => "");
+    throw new Error(`SharePoint upload failed (${uploadRes.status}): ${text.slice(0, 300)}`);
+  }
+  const uploaded = await uploadRes.json().catch(() => ({}));
+  return {
+    success: true,
+    path: `${folderPath}/${sanitizedFile}`,
+    webUrl: uploaded.webUrl
+  };
 }
 
 // server/excelParser.ts
@@ -239,7 +317,13 @@ function getLatestExcelFile() {
     });
     return excelFiles[0];
   } catch (error) {
-    console.error("Error finding latest Excel file:", error);
+    const code = error?.code || "";
+    const msg = error?.message || String(error);
+    if (code === "ENOENT" || msg.includes("ENOENT") || msg.includes("no such file")) {
+      console.warn("[excelParser] attached_assets missing or unreadable \u2014 Excel work-order data unavailable until a file is mounted.");
+    } else {
+      console.warn("[excelParser] Could not find latest Excel file:", msg);
+    }
     return null;
   }
 }
@@ -280,55 +364,307 @@ function getAllWorkOrders() {
 (async () => {
   try {
     const latestFile = getLatestExcelFile();
-    const fileName = latestFile || "OpenOrdersAllQtyOnly_1760375874902.xlsx";
-    const excelPath = join2(__dirname, "..", "attached_assets", fileName);
+    if (!latestFile) {
+      console.warn(
+        "[excelParser] No OpenOrders Excel file in attached_assets \u2014 work-order lookup empty until a file is mounted or Drive sync runs."
+      );
+      return;
+    }
+    const excelPath = join2(__dirname, "..", "attached_assets", latestFile);
     cachedData = await parseExcelFile(excelPath);
-    currentFileName = fileName;
+    currentFileName = latestFile;
+    console.log(`[excelParser] Loaded initial Excel file: ${latestFile}`);
   } catch (error) {
-    console.error("Error loading initial Excel file:", error);
+    const code = error?.code || "";
+    const msg = error?.message || String(error);
+    if (code === "ENOENT" || msg.includes("ENOENT") || msg.includes("no such file")) {
+      console.warn("[excelParser] Initial Excel file missing \u2014 skipping load (SharePoint image uploads unaffected).");
+    } else {
+      console.warn("[excelParser] Skipping initial Excel load:", msg);
+    }
   }
 })();
 
-// server/routes.ts
-var upload = multer({ storage: multer.memoryStorage() });
-async function registerRoutes(app2) {
-  app2.post("/api/upload/gdrive", upload.single("imageFile"), async (req, res) => {
+// server/aceSso.ts
+import { createHmac, timingSafeEqual } from "crypto";
+var SSO_COOKIE = "ace_sso";
+var SSO_JWT_EXPIRY_SECONDS = 8 * 60 * 60;
+var SSO_REFRESH_THRESHOLD_SECONDS = 2 * 60 * 60;
+function base64urlEncode(input) {
+  const buf = Buffer.isBuffer(input) ? input : Buffer.from(input, "utf8");
+  return buf.toString("base64").replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
+}
+function base64urlDecode(input) {
+  const pad = (4 - input.length % 4) % 4;
+  const b64 = input.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat(pad);
+  return Buffer.from(b64, "base64");
+}
+function signHs256Jwt(payload, secret, expiresInSeconds) {
+  const header = { alg: "HS256", typ: "JWT" };
+  const now = Math.floor(Date.now() / 1e3);
+  const body = { ...payload, iat: now, exp: now + expiresInSeconds };
+  const h = base64urlEncode(JSON.stringify(header));
+  const p = base64urlEncode(JSON.stringify(body));
+  const data = `${h}.${p}`;
+  const sig = createHmac("sha256", secret).update(data).digest();
+  return `${data}.${base64urlEncode(sig)}`;
+}
+function verifyHs256Jwt(token, secret) {
+  const parts = token.split(".");
+  if (parts.length !== 3) return null;
+  const [h, p, s] = parts;
+  const data = `${h}.${p}`;
+  const expected = createHmac("sha256", secret).update(data).digest();
+  let actual;
+  try {
+    actual = base64urlDecode(s);
+  } catch {
+    return null;
+  }
+  if (expected.length !== actual.length || !timingSafeEqual(expected, actual)) {
+    return null;
+  }
+  try {
+    const payload = JSON.parse(base64urlDecode(p).toString("utf8"));
+    if (typeof payload.exp === "number" && payload.exp < Math.floor(Date.now() / 1e3)) {
+      return null;
+    }
+    if (!payload.sub || !payload.email) return null;
+    return payload;
+  } catch {
+    return null;
+  }
+}
+function parseCookies(req) {
+  const header = req.headers.cookie;
+  if (!header) return {};
+  const out = {};
+  for (const part of header.split(";")) {
+    const idx = part.indexOf("=");
+    if (idx === -1) continue;
+    const key = part.slice(0, idx).trim();
+    const raw = part.slice(idx + 1).trim();
+    if (!key) continue;
     try {
-      if (!req.file) {
-        return res.status(400).json({ error: "No file uploaded" });
-      }
-      const { customerName, dept, workOrderNumber, imageName } = req.body;
-      if (!customerName || !dept || !workOrderNumber || !imageName) {
-        return res.status(400).json({ error: "Missing required fields" });
-      }
-      const extension = req.file.originalname.split(".").pop() || "jpg";
-      const fileName = `${imageName}.${extension}`;
-      const result = await uploadFileToGoogleDrive(
-        customerName,
-        dept,
-        workOrderNumber,
-        fileName,
-        req.file.buffer
-      );
-      res.json(result);
-    } catch (error) {
-      console.error("Google Drive upload error:", error);
-      const msg = error.message || "";
-      const isAuthFailure = msg.includes("not connected") || msg.includes("Authentication required") || msg.includes("Token refresh failed") || msg.includes("Connection is error") || msg.includes("invalid_grant") || msg.includes("UNAUTHORIZED");
-      if (isAuthFailure) {
+      out[key] = decodeURIComponent(raw);
+    } catch {
+      out[key] = raw;
+    }
+  }
+  return out;
+}
+function cookieDomainOptions() {
+  const domain = process.env.APP_DOMAIN;
+  const isLocal = !domain || domain === "localhost" || domain === "127.0.0.1";
+  return isLocal ? {} : { domain: `.${domain}` };
+}
+function setAceSsoCookie(res, token) {
+  res.cookie(SSO_COOKIE, token, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    path: "/",
+    ...cookieDomainOptions()
+  });
+}
+function clearAceSsoCookie(res) {
+  res.cookie(SSO_COOKIE, "", {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    path: "/",
+    maxAge: 0,
+    ...cookieDomainOptions()
+  });
+}
+function verifyAceSsoToken(token) {
+  const secret = process.env.SSO_JWT_SECRET;
+  if (!secret || !token) return null;
+  return verifyHs256Jwt(token, secret);
+}
+function hasAppAccess(payload, app2) {
+  if (!payload) return false;
+  return payload.apps?.includes(app2) ?? false;
+}
+function refreshSsoTokenIfNeeded(token, payload, res) {
+  try {
+    const secret = process.env.SSO_JWT_SECRET;
+    if (!secret) return;
+    if (typeof payload.exp === "number" && payload.exp - Math.floor(Date.now() / 1e3) >= SSO_REFRESH_THRESHOLD_SECONDS) {
+      return;
+    }
+    const newToken = signHs256Jwt(
+      {
+        sub: payload.sub,
+        email: payload.email,
+        name: payload.name,
+        employeeId: payload.employeeId,
+        groups: payload.groups,
+        apps: payload.apps
+      },
+      secret,
+      SSO_JWT_EXPIRY_SECONDS
+    );
+    setAceSsoCookie(res, newToken);
+  } catch {
+  }
+}
+function buildSsoLoginUrl(req, nextPath = "/") {
+  const ssoBase = process.env.SSO_LOGIN_URL;
+  if (!ssoBase) return null;
+  const appUrl = process.env.APP_URL || `${req.protocol}://${req.get("host")}`;
+  const callback = `${appUrl}/api/auth/sso/callback`;
+  const withNext = nextPath && nextPath !== "/" ? `${callback}?next=${encodeURIComponent(nextPath)}` : callback;
+  return `${ssoBase}?redirect_uri=${encodeURIComponent(withNext)}`;
+}
+function tryAceSsoFromRequest(req, res) {
+  const cookies = parseCookies(req);
+  const token = cookies[SSO_COOKIE];
+  if (!token) return null;
+  const payload = verifyAceSsoToken(token);
+  if (!payload) return null;
+  req.aceSsoUser = { ...payload, id: payload.sub };
+  refreshSsoTokenIfNeeded(token, payload, res);
+  return payload;
+}
+function requireAceSsoApp(app2) {
+  return (req, res, next) => {
+    const payload = tryAceSsoFromRequest(req, res);
+    if (!payload) {
+      const loginUrl = buildSsoLoginUrl(req);
+      if (loginUrl) {
         return res.status(401).json({
-          error: "Google Drive not connected",
-          message: "Google Drive authorization has expired or been revoked. Please reconnect Google Drive in Replit's Integrations panel and try again.",
-          requiresAuth: true
+          error: "Unauthorized",
+          ssoLoginUrl: loginUrl
         });
       }
-      res.status(500).json({
-        error: "Upload failed",
-        message: msg || "Unknown upload error"
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+    if (!hasAppAccess(payload, app2)) {
+      return res.status(403).json({
+        error: "Forbidden",
+        message: "You do not have access to this application."
       });
     }
+    next();
+  };
+}
+function requireAceSsoSpa(app2) {
+  return (req, res, next) => {
+    if (req.path.startsWith("/api/") || req.path === "/health") return next();
+    if (req.method !== "GET" && req.method !== "HEAD") return next();
+    const payload = tryAceSsoFromRequest(req, res);
+    if (payload && hasAppAccess(payload, app2)) return next();
+    const loginUrl = buildSsoLoginUrl(req, req.originalUrl || "/");
+    if (loginUrl) return res.redirect(loginUrl);
+    return res.status(401).send("Unauthorized \u2014 SSO not configured");
+  };
+}
+function registerAceSsoRoutes(app2, appSlug = "imageflow") {
+  app2.get("/api/auth/sso/callback", (req, res) => {
+    const rawToken = req.query.ace_token;
+    const nextPath = req.query.next || "/";
+    const safeNext = nextPath.startsWith("/") ? nextPath : "/";
+    if (!rawToken) return res.redirect(safeNext);
+    const token = decodeURIComponent(rawToken);
+    const payload = verifyAceSsoToken(token);
+    if (!payload) return res.redirect("/");
+    if (!hasAppAccess(payload, appSlug)) {
+      clearAceSsoCookie(res);
+      return res.status(403).send("You do not have access to ImageFlow. Contact your administrator.");
+    }
+    setAceSsoCookie(res, token);
+    res.redirect(safeNext);
   });
-  app2.get("/api/work-orders", (req, res) => {
+  app2.get("/api/auth/sso/session", (req, res) => {
+    const payload = tryAceSsoFromRequest(req, res);
+    if (payload && hasAppAccess(payload, appSlug)) {
+      return res.json({
+        authenticated: true,
+        via: "sso",
+        user: {
+          id: payload.sub,
+          email: payload.email,
+          name: payload.name,
+          groups: payload.groups ?? [],
+          apps: payload.apps ?? []
+        }
+      });
+    }
+    const loginUrl = buildSsoLoginUrl(req, "/");
+    if (loginUrl) {
+      return res.json({
+        authenticated: false,
+        ssoLoginUrl: loginUrl
+      });
+    }
+    res.json({ authenticated: false });
+  });
+  app2.post("/api/auth/sso/logout", (_req, res) => {
+    clearAceSsoCookie(res);
+    res.json({ ok: true });
+  });
+  app2.get("/api/auth/sso/logout", (_req, res) => {
+    clearAceSsoCookie(res);
+    const ssoBase = process.env.SSO_LOGIN_URL;
+    if (ssoBase) return res.redirect(ssoBase);
+    res.redirect("/");
+  });
+}
+
+// server/routes.ts
+var upload = multer({ storage: multer.memoryStorage() });
+var requireImageflow = requireAceSsoApp("imageflow");
+async function handleImageUpload(req, res) {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: "No file uploaded" });
+    }
+    const { customerName, dept, workOrderNumber, imageName } = req.body;
+    if (!customerName || !dept || !workOrderNumber || !imageName) {
+      return res.status(400).json({ error: "Missing required fields" });
+    }
+    const extension = req.file.originalname.split(".").pop() || "jpg";
+    const fileName = `${imageName}.${extension}`;
+    const result = await uploadFileToSharePoint(
+      customerName,
+      dept,
+      workOrderNumber,
+      fileName,
+      req.file.buffer
+    );
+    res.json(result);
+  } catch (error) {
+    console.error("SharePoint upload error:", error);
+    const msg = error.message || "";
+    const isAuthFailure = msg.includes("Missing required env var") || msg.includes("Azure token") || msg.includes("UNAUTHORIZED") || msg.includes("401") || msg.includes("403");
+    if (isAuthFailure) {
+      return res.status(401).json({
+        error: "SharePoint not configured",
+        message: msg || "SharePoint / Azure Graph credentials are missing or invalid. Check AZURE_* and SHAREPOINT_* env vars.",
+        requiresAuth: true
+      });
+    }
+    res.status(500).json({
+      error: "Upload failed",
+      message: msg || "Unknown upload error"
+    });
+  }
+}
+async function registerRoutes(app2) {
+  app2.post(
+    "/api/upload/sharepoint",
+    requireImageflow,
+    upload.single("imageFile"),
+    handleImageUpload
+  );
+  app2.post(
+    "/api/upload/gdrive",
+    requireImageflow,
+    upload.single("imageFile"),
+    handleImageUpload
+  );
+  app2.get("/api/work-orders", requireImageflow, (req, res) => {
     try {
       const workOrders = getAllWorkOrders();
       res.json(workOrders);
@@ -337,7 +673,7 @@ async function registerRoutes(app2) {
       res.status(500).json({ error: "Failed to fetch work orders" });
     }
   });
-  app2.get("/api/part-numbers/:workOrder", (req, res) => {
+  app2.get("/api/part-numbers/:workOrder", requireImageflow, (req, res) => {
     try {
       const { workOrder } = req.params;
       const partNumbers = getPartNumbersByWorkOrder(workOrder);
@@ -347,7 +683,7 @@ async function registerRoutes(app2) {
       res.status(500).json({ error: "Failed to fetch part numbers" });
     }
   });
-  app2.get("/api/excel-info", (req, res) => {
+  app2.get("/api/excel-info", requireImageflow, (req, res) => {
     try {
       const fileName = getCurrentFileName();
       res.json({ fileName });
@@ -356,7 +692,7 @@ async function registerRoutes(app2) {
       res.status(500).json({ error: "Failed to get Excel info" });
     }
   });
-  app2.post("/api/check-excel-updates", async (req, res) => {
+  app2.post("/api/check-excel-updates", requireImageflow, async (req, res) => {
     try {
       const driveResult = await checkForNewExcelFile();
       if (!driveResult.success) {
@@ -393,6 +729,12 @@ async function registerRoutes(app2) {
 // server/scheduler.ts
 import cron from "node-cron";
 function initializeScheduler() {
+  if (!isExcelDriveSyncAvailable()) {
+    console.warn(
+      "[Scheduler] Excel Drive sync scheduler disabled (no Replit connectors). SharePoint image uploads are unaffected."
+    );
+    return;
+  }
   console.log("[Scheduler] Initializing Excel update scheduler...");
   const cronExpression = "20 7 * * *";
   cron.schedule(cronExpression, async () => {
@@ -438,10 +780,20 @@ function initializeScheduler() {
           console.log(`[Scheduler] \u2713 Initial update successful: ${driveResult.originalFileName}`);
         }
       } else {
-        console.log(`[Scheduler] Initial check: ${driveResult.message}`);
+        const msg = driveResult.message || "";
+        if (msg.includes("Replit identity") || msg.includes("not configured")) {
+          console.warn(`[Scheduler] Initial Excel check skipped: ${msg}`);
+        } else {
+          console.log(`[Scheduler] Initial check: ${msg}`);
+        }
       }
     } catch (error) {
-      console.error("[Scheduler] Initial update check error:", error.message);
+      const msg = error?.message || String(error);
+      if (String(msg).includes("Replit identity")) {
+        console.warn(`[Scheduler] Initial Excel check skipped: ${msg}`);
+      } else {
+        console.error("[Scheduler] Initial update check error:", msg);
+      }
     }
   }, 1e4);
 }
@@ -462,6 +814,10 @@ function log(message, source = "express") {
 var app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
+app.get("/health", (_req, res) => {
+  res.json({ ok: true, service: "imageflow" });
+});
+registerAceSsoRoutes(app, "imageflow");
 app.use((req, res, next) => {
   const start = Date.now();
   const path2 = req.path;
@@ -494,6 +850,7 @@ app.use((req, res, next) => {
     res.status(status).json({ message });
     throw err;
   });
+  app.use(requireAceSsoSpa("imageflow"));
   if (process.env.NODE_ENV === "development") {
     const viteModule = "./vite";
     const { setupVite } = await import(viteModule);

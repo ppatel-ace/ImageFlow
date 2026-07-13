@@ -1,9 +1,16 @@
 import cron from 'node-cron';
-import { checkForNewExcelFile } from './gdrive';
+import { checkForNewExcelFile, isExcelDriveSyncAvailable } from './gdrive';
 import { reloadExcelData } from './excelParser';
 
 // Server-side scheduled task to check for Excel updates at 7:20 AM EST/EDT daily
 export function initializeScheduler() {
+  if (!isExcelDriveSyncAvailable()) {
+    console.warn(
+      '[Scheduler] Excel Drive sync scheduler disabled (no Replit connectors). SharePoint image uploads are unaffected.',
+    );
+    return;
+  }
+
   console.log('[Scheduler] Initializing Excel update scheduler...');
   
   // Cron expression: "20 7 * * *" runs at 7:20 AM
@@ -65,10 +72,20 @@ export function initializeScheduler() {
           console.log(`[Scheduler] ✓ Initial update successful: ${driveResult.originalFileName}`);
         }
       } else {
-        console.log(`[Scheduler] Initial check: ${driveResult.message}`);
+        const msg = driveResult.message || '';
+        if (msg.includes('Replit identity') || msg.includes('not configured')) {
+          console.warn(`[Scheduler] Initial Excel check skipped: ${msg}`);
+        } else {
+          console.log(`[Scheduler] Initial check: ${msg}`);
+        }
       }
     } catch (error: any) {
-      console.error('[Scheduler] Initial update check error:', error.message);
+      const msg = error?.message || String(error);
+      if (String(msg).includes('Replit identity')) {
+        console.warn(`[Scheduler] Initial Excel check skipped: ${msg}`);
+      } else {
+        console.error('[Scheduler] Initial update check error:', msg);
+      }
     }
   }, 10000); // 10 seconds delay
 }

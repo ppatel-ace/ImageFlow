@@ -63,8 +63,14 @@ export function getLatestExcelFile(): string | null {
     });
 
     return excelFiles[0];
-  } catch (error) {
-    console.error('Error finding latest Excel file:', error);
+  } catch (error: any) {
+    const code = error?.code || '';
+    const msg = error?.message || String(error);
+    if (code === 'ENOENT' || msg.includes('ENOENT') || msg.includes('no such file')) {
+      console.warn('[excelParser] attached_assets missing or unreadable — Excel work-order data unavailable until a file is mounted.');
+    } else {
+      console.warn('[excelParser] Could not find latest Excel file:', msg);
+    }
     return null;
   }
 }
@@ -122,11 +128,23 @@ export function getAllWorkOrders(): string[] {
 (async () => {
   try {
     const latestFile = getLatestExcelFile();
-    const fileName = latestFile || 'OpenOrdersAllQtyOnly_1760375874902.xlsx';
-    const excelPath = join(__dirname, '..', 'attached_assets', fileName);
+    if (!latestFile) {
+      console.warn(
+        '[excelParser] No OpenOrders Excel file in attached_assets — work-order lookup empty until a file is mounted or Drive sync runs.',
+      );
+      return;
+    }
+    const excelPath = join(__dirname, '..', 'attached_assets', latestFile);
     cachedData = await parseExcelFile(excelPath);
-    currentFileName = fileName;
-  } catch (error) {
-    console.error('Error loading initial Excel file:', error);
+    currentFileName = latestFile;
+    console.log(`[excelParser] Loaded initial Excel file: ${latestFile}`);
+  } catch (error: any) {
+    const code = error?.code || '';
+    const msg = error?.message || String(error);
+    if (code === 'ENOENT' || msg.includes('ENOENT') || msg.includes('no such file')) {
+      console.warn('[excelParser] Initial Excel file missing — skipping load (SharePoint image uploads unaffected).');
+    } else {
+      console.warn('[excelParser] Skipping initial Excel load:', msg);
+    }
   }
 })();
