@@ -1,94 +1,160 @@
-import { Client } from '@microsoft/microsoft-graph-client';
+/**
+ * SharePoint uploads via Azure AD app client credentials (GCC High).
+ * Token: login.microsoftonline.us → Graph: graph.microsoft.us
+ * Site: {hostname}:{sitePath} e.g. aceelectronics.sharepoint.us:/sites/jobtravelerphotos
+ * Folder layout: ACE/{Customer}/{Dept}/{WorkOrder}/
+ */
 
-let connectionSettings: any;
-
-// Replace invalid folder name characters with underscore
-function sanitizeCustomerName(customerName: string): string {
-  return customerName.replace(/[<>:"/\\|?*]/g, '_');
+interface TokenCache {
+  accessToken: string;
+  expiresAt: number;
 }
 
-async function getAccessToken() {
-  if (connectionSettings && connectionSettings.settings.expires_at && new Date(connectionSettings.settings.expires_at).getTime() > Date.now()) {
-    return connectionSettings.settings.access_token;
-  }
-  
-  const hostname = process.env.REPLIT_CONNECTORS_HOSTNAME;
-  const xReplitToken = process.env.REPL_IDENTITY 
-    ? 'repl ' + process.env.REPL_IDENTITY 
-    : process.env.WEB_REPL_RENEWAL 
-    ? 'depl ' + process.env.WEB_REPL_RENEWAL 
-    : null;
+let tokenCache: TokenCache | null = null;
 
-  if (!xReplitToken) {
-    throw new Error('Authentication required. Please connect to SharePoint.');
-  }
+const GRAPH_BASE = "https://graph.microsoft.us/v1.0";
+const TOKEN_URL_BASE = "https://login.microsoftonline.us";
 
-  connectionSettings = await fetch(
-    'https://' + hostname + '/api/v2/connection?include_secrets=true&connector_names=sharepoint',
-    {
-      headers: {
-        'Accept': 'application/json',
-        'X_REPLIT_TOKEN': xReplitToken
-      }
-    }
-  ).then(res => res.json()).then(data => data.items?.[0]);
-
-  const accessToken = connectionSettings?.settings?.access_token ?? connectionSettings?.settings?.oauth?.credentials?.access_token;
-
-  if (!connectionSettings || !accessToken) {
-    throw new Error('SharePoint not connected. Please connect your SharePoint account.');
-  }
-  return accessToken;
+function sanitizePathSegment(value: string): string {
+  return value.replace(/[<>:"/\\|?*]/g, "_");
 }
 
-export async function getSharePointClient() {
-  const accessToken = await getAccessToken();
+function requireEnv(name: string): string {
+  const v = process.env[name]?.trim();
+  if (!v) throw new Error(`Missing required env var: ${name}`);
+  return v;
+}
 
-  return Client.init({
-    authProvider: (done) => {
-      done(null, accessToken);
-    },
-    // Use Government Community Cloud (GCC) endpoint
-    baseUrl: 'https://graph.microsoft.us/v1.0'
+async function getAccessToken(): Promise<string> {
+  if (tokenCache && tokenCache.expiresAt > Date.now() + 60_000) {
+    return tokenCache.accessToken;
+  }
+
+  const tenantId = requireEnv("AZURE_TENANT_ID");
+  const clientId = requireEnv("AZURE_CLIENT_ID");
+  const clientSecret = requireEnv("AZURE_CLIENT_SECRET");
+
+  const body = new URLSearchParams({
+    grant_type: "client_credentials",
+    client_id: clientId,
+    client_secret: clientSecret,
+    scope: "https://graph.microsoft.us/.default",
   });
+
+  const res = await fetch(`${TOKEN_URL_BASE}/${tenantId}/oauth2/v2.0/token`, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body,
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Azure token request failed (${res.status}): ${text.slice(0, 300)}`);
+  }
+
+  const data = (await res.json()) as {
+    access_token?: string;
+    expires_in?: number;
+  };
+  if (!data.access_token) {
+    throw new Error("Azure token response missing access_token");
+  }
+
+  tokenCache = {
+    accessToken: data.access_token,
+    expiresAt: Date.now() + (data.expires_in ?? 3600) * 1000,
+  };
+  return tokenCache.accessToken;
 }
 
-async function ensureFolder(client: any, siteId: string, folderPath: string) {
-  try {
-    // Try to get the folder
-    await client.api(`/sites/${siteId}/drive/root:/${folderPath}`).get();
-  } catch (error: any) {
-    if (error.statusCode === 404) {
-      // Folder doesn't exist, create it
-      const pathParts = folderPath.split('/');
-      let currentPath = '';
-      
-      for (const part of pathParts) {
-        const parentPath = currentPath || '/';
-        currentPath = currentPath ? `${currentPath}/${part}` : part;
-        
-        try {
-          // Try to get the folder
-          await client.api(`/sites/${siteId}/drive/root:/${currentPath}`).get();
-        } catch (err: any) {
-          if (err.statusCode === 404) {
-            // Create the folder
-            const createPath = parentPath === '/' 
-              ? `/sites/${siteId}/drive/root/children`
-              : `/sites/${siteId}/drive/root:/${parentPath}:/children`;
-            
-            await client.api(createPath).post({
-              name: part,
-              folder: {},
-              '@microsoft.graph.conflictBehavior': 'rename'
-            });
-          } else {
-            throw err;
-          }
-        }
-      }
-    } else {
-      throw error;
+async function graphFetch(
+  path: string,
+  init: RequestInit = {},
+): Promise<Response> {
+  const token = await getAccessToken();
+  const url = path.startsWith("http") ? path : `${GRAPH_BASE}${path}`;
+  const headers = new Headers(init.headers);
+  headers.set("Authorization", `Bearer ${token}`);
+  if (!headers.has("Content-Type") && init.body && !(init.body instanceof Buffer)) {
+    headers.set("Content-Type", "application/json");
+  }
+  return fetch(url, { ...init, headers });
+}
+
+async function resolveSiteId(): Promise<string> {
+  const hostname =
+    process.env.SHAREPOINT_SITE_HOSTNAME?.trim() || "aceelectronics.sharepoint.us";
+  const sitePath =
+    process.env.SHAREPOINT_SITE_PATH?.trim() || "/sites/jobtravelerphotos";
+  const normalizedPath = sitePath.startsWith("/") ? sitePath : `/${sitePath}`;
+
+  const res = await graphFetch(
+    `/sites/${encodeURIComponent(hostname)}:${normalizedPath}`,
+  );
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Failed to resolve SharePoint site (${res.status}): ${text.slice(0, 300)}`);
+  }
+  const site = (await res.json()) as { id?: string };
+  if (!site.id) throw new Error("SharePoint site response missing id");
+  return site.id;
+}
+
+async function resolveDriveId(siteId: string): Promise<string> {
+  const configured = process.env.SHAREPOINT_DRIVE_ID?.trim();
+  if (configured) return configured;
+
+  const res = await graphFetch(`/sites/${siteId}/drive`);
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Failed to resolve default drive (${res.status}): ${text.slice(0, 300)}`);
+  }
+  const drive = (await res.json()) as { id?: string };
+  if (!drive.id) throw new Error("SharePoint drive response missing id");
+  return drive.id;
+}
+
+function driveItemPath(segments: string[]): string {
+  return segments.map(encodeURIComponent).join("/");
+}
+
+async function ensureFolderPath(driveId: string, folderPath: string): Promise<void> {
+  const parts = folderPath.split("/").filter(Boolean);
+  const built: string[] = [];
+
+  for (const part of parts) {
+    const parentSegments = [...built];
+    built.push(part);
+
+    const probe = await graphFetch(`/drives/${driveId}/root:/${driveItemPath(built)}`);
+    if (probe.ok) continue;
+    if (probe.status !== 404) {
+      const text = await probe.text().catch(() => "");
+      throw new Error(
+        `Failed to check folder ${built.join("/")} (${probe.status}): ${text.slice(0, 200)}`,
+      );
+    }
+
+    const createUrl =
+      parentSegments.length === 0
+        ? `/drives/${driveId}/root/children`
+        : `/drives/${driveId}/root:/${driveItemPath(parentSegments)}:/children`;
+
+    const createRes = await graphFetch(createUrl, {
+      method: "POST",
+      body: JSON.stringify({
+        name: part,
+        folder: {},
+        "@microsoft.graph.conflictBehavior": "fail",
+      }),
+    });
+
+    // 409 = already created concurrently — treat as success
+    if (!createRes.ok && createRes.status !== 409) {
+      const text = await createRes.text().catch(() => "");
+      throw new Error(
+        `Failed to create folder ${part} (${createRes.status}): ${text.slice(0, 200)}`,
+      );
     }
   }
 }
@@ -98,31 +164,40 @@ export async function uploadFileToSharePoint(
   dept: string,
   workOrderNumber: string,
   fileName: string,
-  fileBuffer: Buffer
-) {
-  const client = await getSharePointClient();
-  
-  // Upload to SharePoint site's default document library
-  // Path structure: ACE/CustomerName/Dept/WorkOrderNumber/filename
-  const sanitizedCustomerName = sanitizeCustomerName(customerName);
-  const folderPath = `ACE/${sanitizedCustomerName}/${dept}/${workOrderNumber}`;
-  
-  // First, get the site ID (use root site)
-  const site = await client.api('/sites/root').get();
-  const siteId = site.id;
-  
-  // Ensure the folder structure exists
-  await ensureFolder(client, siteId, folderPath);
-  
-  // Upload to the default document library
-  const filePath = `/sites/${siteId}/drive/root:/${folderPath}/${fileName}:/content`;
-  
-  await client
-    .api(filePath)
-    .put(fileBuffer);
-  
+  fileBuffer: Buffer,
+): Promise<{ success: true; path: string; webUrl?: string }> {
+  const siteId = await resolveSiteId();
+  const driveId = await resolveDriveId(siteId);
+
+  const sanitizedCustomer = sanitizePathSegment(customerName);
+  const sanitizedDept = sanitizePathSegment(dept);
+  const sanitizedWo = sanitizePathSegment(workOrderNumber);
+  const sanitizedFile = sanitizePathSegment(fileName);
+  const folderPath = `ACE/${sanitizedCustomer}/${sanitizedDept}/${sanitizedWo}`;
+
+  await ensureFolderPath(driveId, folderPath);
+
+  const uploadPath = `/drives/${driveId}/root:/${driveItemPath([
+    ...folderPath.split("/").filter(Boolean),
+    sanitizedFile,
+  ])}:/content`;
+
+  const uploadRes = await graphFetch(uploadPath, {
+    method: "PUT",
+    headers: { "Content-Type": "application/octet-stream" },
+    body: fileBuffer,
+  });
+
+  if (!uploadRes.ok) {
+    const text = await uploadRes.text().catch(() => "");
+    throw new Error(`SharePoint upload failed (${uploadRes.status}): ${text.slice(0, 300)}`);
+  }
+
+  const uploaded = (await uploadRes.json().catch(() => ({}))) as { webUrl?: string };
+
   return {
     success: true,
-    path: `${folderPath}/${fileName}`
+    path: `${folderPath}/${sanitizedFile}`,
+    webUrl: uploaded.webUrl,
   };
 }

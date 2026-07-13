@@ -1,67 +1,87 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
-import { storage } from "./storage";
 import multer from "multer";
-import { uploadFileToGoogleDrive, checkForNewExcelFile } from "./gdrive";
-import { getAllWorkOrders, getPartNumbersByWorkOrder, getRevByPartNumber, reloadExcelData, getCurrentFileName } from "./excelParser";
+import { checkForNewExcelFile } from "./gdrive";
+import { uploadFileToSharePoint } from "./sharepoint";
+import {
+  getAllWorkOrders,
+  getPartNumbersByWorkOrder,
+  reloadExcelData,
+  getCurrentFileName,
+} from "./excelParser";
+import { requireAceSsoApp } from "./aceSso";
 
 const upload = multer({ storage: multer.memoryStorage() });
+const requireImageflow = requireAceSsoApp("imageflow");
 
-export async function registerRoutes(app: Express): Promise<Server> {
+async function handleImageUpload(req: any, res: any) {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: "No file uploaded" });
+    }
 
-  app.post("/api/upload/gdrive", upload.single("imageFile"), async (req, res) => {
-    try {
-      if (!req.file) {
-        return res.status(400).json({ error: "No file uploaded" });
-      }
+    const { customerName, dept, workOrderNumber, imageName } = req.body;
 
-      const { customerName, dept, workOrderNumber, imageName } = req.body;
+    if (!customerName || !dept || !workOrderNumber || !imageName) {
+      return res.status(400).json({ error: "Missing required fields" });
+    }
 
-      if (!customerName || !dept || !workOrderNumber || !imageName) {
-        return res.status(400).json({ error: "Missing required fields" });
-      }
+    const extension = req.file.originalname.split(".").pop() || "jpg";
+    const fileName = `${imageName}.${extension}`;
 
-      const extension = req.file.originalname.split('.').pop() || 'jpg';
-      const fileName = `${imageName}.${extension}`;
+    const result = await uploadFileToSharePoint(
+      customerName,
+      dept,
+      workOrderNumber,
+      fileName,
+      req.file.buffer,
+    );
 
-      const result = await uploadFileToGoogleDrive(
-        customerName,
-        dept,
-        workOrderNumber,
-        fileName,
-        req.file.buffer
-      );
+    res.json(result);
+  } catch (error: any) {
+    console.error("SharePoint upload error:", error);
 
-      res.json(result);
-    } catch (error: any) {
-      console.error("Google Drive upload error:", error);
-      
-      const msg: string = error.message || "";
-      const isAuthFailure =
-        msg.includes('not connected') ||
-        msg.includes('Authentication required') ||
-        msg.includes('Token refresh failed') ||
-        msg.includes('Connection is error') ||
-        msg.includes('invalid_grant') ||
-        msg.includes('UNAUTHORIZED');
+    const msg: string = error.message || "";
+    const isAuthFailure =
+      msg.includes("Missing required env var") ||
+      msg.includes("Azure token") ||
+      msg.includes("UNAUTHORIZED") ||
+      msg.includes("401") ||
+      msg.includes("403");
 
-      if (isAuthFailure) {
-        return res.status(401).json({
-          error: "Google Drive not connected",
-          message: "Google Drive authorization has expired or been revoked. Please reconnect Google Drive in Replit's Integrations panel and try again.",
-          requiresAuth: true,
-        });
-      }
-
-      res.status(500).json({
-        error: "Upload failed",
-        message: msg || "Unknown upload error",
+    if (isAuthFailure) {
+      return res.status(401).json({
+        error: "SharePoint not configured",
+        message:
+          msg ||
+          "SharePoint / Azure Graph credentials are missing or invalid. Check AZURE_* and SHAREPOINT_* env vars.",
+        requiresAuth: true,
       });
     }
-  });
 
-  // Excel data endpoints
-  app.get("/api/work-orders", (req, res) => {
+    res.status(500).json({
+      error: "Upload failed",
+      message: msg || "Unknown upload error",
+    });
+  }
+}
+
+export async function registerRoutes(app: Express): Promise<Server> {
+  app.post(
+    "/api/upload/sharepoint",
+    requireImageflow,
+    upload.single("imageFile"),
+    handleImageUpload,
+  );
+  // Alias — legacy client path kept for compatibility
+  app.post(
+    "/api/upload/gdrive",
+    requireImageflow,
+    upload.single("imageFile"),
+    handleImageUpload,
+  );
+
+  app.get("/api/work-orders", requireImageflow, (req, res) => {
     try {
       const workOrders = getAllWorkOrders();
       res.json(workOrders);
@@ -71,7 +91,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/part-numbers/:workOrder", (req, res) => {
+  app.get("/api/part-numbers/:workOrder", requireImageflow, (req, res) => {
     try {
       const { workOrder } = req.params;
       const partNumbers = getPartNumbersByWorkOrder(workOrder);
@@ -82,8 +102,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Get current Excel file info
-  app.get("/api/excel-info", (req, res) => {
+  app.get("/api/excel-info", requireImageflow, (req, res) => {
     try {
       const fileName = getCurrentFileName();
       res.json({ fileName });
@@ -93,23 +112,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Check for Excel updates in Google Drive KSAlert folder
-  app.post("/api/check-excel-updates", async (req, res) => {
+  // Excel/work-order sync remains on Google Drive / local (known gap)
+  app.post("/api/check-excel-updates", requireImageflow, async (req, res) => {
     try {
       const driveResult = await checkForNewExcelFile();
-      
+
       if (!driveResult.success) {
         return res.json(driveResult);
       }
 
-      // Reload Excel data with the new file
       const reloadResult = await reloadExcelData();
-      
+
       if (!reloadResult.success) {
         return res.status(500).json({
           success: false,
           message: "Excel file downloaded but failed to load",
-          error: reloadResult.error
+          error: reloadResult.error,
         });
       }
 
@@ -118,14 +136,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         message: "Excel data updated successfully from Google Drive",
         fileName: driveResult.fileName,
         fileDate: driveResult.fileDate,
-        currentFile: reloadResult.fileName
+        currentFile: reloadResult.fileName,
       });
     } catch (error: any) {
       console.error("Error checking for Excel updates:", error);
-      res.status(500).json({ 
+      res.status(500).json({
         success: false,
         error: "Failed to check for Excel updates",
-        message: error.message || String(error)
+        message: error.message || String(error),
       });
     }
   });

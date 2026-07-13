@@ -42,8 +42,8 @@ interface CapturedImage {
 export default function ImageUploadForm() {
   const [capturedImages, setCapturedImages] = useState<CapturedImage[]>([]);
   const [isSavingLocal, setIsSavingLocal] = useState(false);
-  const [isUploadingGdrive, setIsUploadingGdrive] = useState(false);
-  const [gdriveSuccess, setGdriveSuccess] = useState(false);
+  const [isUploadingSharePoint, setIsUploadingSharePoint] = useState(false);
+  const [sharePointSuccess, setSharePointSuccess] = useState(false);
   const [partNumberOptions, setPartNumberOptions] = useState<{ partNumber: string; rev: string; customerName: string }[]>([]);
   const [workOrderOpen, setWorkOrderOpen] = useState(false);
   const [workOrderSearch, setWorkOrderSearch] = useState("");
@@ -269,7 +269,7 @@ export default function ImageUploadForm() {
     }
   };
 
-  const handleGdriveUpload = async () => {
+  const handleSharePointUpload = async () => {
     if (capturedImages.length === 0 || !dept || !customerName || !workOrderNumber || !partNumber) {
       toast({
         title: "Missing Information",
@@ -279,7 +279,7 @@ export default function ImageUploadForm() {
       return;
     }
 
-    setIsUploadingGdrive(true);
+    setIsUploadingSharePoint(true);
     
     try {
       let uploadedCount = 0;
@@ -300,9 +300,10 @@ export default function ImageUploadForm() {
         formData.append("imageName", imageName);
 
         try {
-          const response = await fetch("/api/upload/gdrive", {
+          const response = await fetch("/api/upload/sharepoint", {
             method: "POST",
             body: formData,
+            credentials: "include",
           });
 
           const result = await response.json().catch(() => ({} as any));
@@ -310,6 +311,11 @@ export default function ImageUploadForm() {
           if (response.ok) {
             uploadedCount++;
             continue;
+          }
+
+          if (response.status === 401 && result?.ssoLoginUrl) {
+            window.location.assign(result.ssoLoginUrl);
+            return;
           }
 
           // Capture the actual server-reported reason so we can surface it below
@@ -329,19 +335,19 @@ export default function ImageUploadForm() {
       if (uploadedCount > 0) {
         toast({
           title: "Upload Successful",
-          description: `${uploadedCount} of ${capturedImages.length} image(s) uploaded to Google Drive`,
+          description: `${uploadedCount} of ${capturedImages.length} image(s) uploaded to SharePoint`,
         });
         setCapturedImages([]);
-        setGdriveSuccess(true);
+        setSharePointSuccess(true);
         setTimeout(() => {
-          setGdriveSuccess(false);
+          setSharePointSuccess(false);
         }, 2000);
       } else if (authErrorEncountered) {
         toast({
-          title: "Google Drive Not Connected",
+          title: "SharePoint Not Configured",
           description:
             lastErrorMessage ||
-            "Google Drive authorization has expired. Please reconnect Google Drive in Replit's Integrations panel.",
+            "SharePoint / Azure Graph credentials are missing or invalid. Contact IT.",
           variant: "destructive",
         });
       } else {
@@ -352,14 +358,14 @@ export default function ImageUploadForm() {
         });
       }
     } catch (error: any) {
-      console.error("Google Drive upload error:", error);
+      console.error("SharePoint upload error:", error);
       toast({
         title: "Upload Failed",
-        description: error?.message || "An error occurred while uploading to Google Drive.",
+        description: error?.message || "An error occurred while uploading to SharePoint.",
         variant: "destructive",
       });
     } finally {
-      setIsUploadingGdrive(false);
+      setIsUploadingSharePoint(false);
     }
   };
 
@@ -929,7 +935,7 @@ export default function ImageUploadForm() {
               });
               setCapturedImages([]);
             }}
-            disabled={isSavingLocal || isUploadingGdrive}
+            disabled={isSavingLocal || isUploadingSharePoint}
             data-testid="button-clear"
           >
             Clear Form
@@ -940,7 +946,7 @@ export default function ImageUploadForm() {
             size="lg"
             className="w-full sm:flex-1 min-h-12 sm:min-h-14"
             onClick={handleSaveLocally}
-            disabled={isSavingLocal || isUploadingGdrive || capturedImages.length === 0 || !workOrderMatches}
+            disabled={isSavingLocal || isUploadingSharePoint || capturedImages.length === 0 || !workOrderMatches}
             data-testid="button-save-local"
           >
             {isSavingLocal ? (
@@ -961,16 +967,16 @@ export default function ImageUploadForm() {
           type="button"
           size="lg"
           className="w-full min-h-12 sm:min-h-14"
-          onClick={handleGdriveUpload}
-          disabled={isSavingLocal || isUploadingGdrive || capturedImages.length === 0 || !workOrderMatches}
-          data-testid="button-upload-gdrive"
+          onClick={handleSharePointUpload}
+          disabled={isSavingLocal || isUploadingSharePoint || capturedImages.length === 0 || !workOrderMatches}
+          data-testid="button-upload-sharepoint"
         >
-          {isUploadingGdrive ? (
+          {isUploadingSharePoint ? (
             <>
               <Loader2 className="w-5 h-5 mr-2 animate-spin" />
               Uploading...
             </>
-          ) : gdriveSuccess ? (
+          ) : sharePointSuccess ? (
             <>
               <CheckCircle2 className="w-5 h-5 mr-2" />
               Success!
@@ -978,7 +984,7 @@ export default function ImageUploadForm() {
           ) : (
             <>
               <Upload className="w-5 h-5 mr-2" />
-              Upload to Google Drive
+              Upload to SharePoint
             </>
           )}
         </Button>

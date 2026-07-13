@@ -1,6 +1,7 @@
 import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { initializeScheduler } from "./scheduler";
+import { registerAceSsoRoutes, requireAceSsoSpa } from "./aceSso";
 import path from "path";
 import fs from "fs";
 import { fileURLToPath } from "url";
@@ -19,6 +20,12 @@ function log(message: string, source = "express") {
 const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
+
+app.get("/health", (_req, res) => {
+  res.json({ ok: true, service: "imageflow" });
+});
+
+registerAceSsoRoutes(app, "imageflow");
 
 app.use((req, res, next) => {
   const start = Date.now();
@@ -60,6 +67,9 @@ app.use((req, res, next) => {
     res.status(status).json({ message });
     throw err;
   });
+
+  // Redirect unauthenticated browser navigations to ACE SSO before SPA shell
+  app.use(requireAceSsoSpa("imageflow"));
 
   // importantly only setup vite in development and after
   // setting up all the other routes so the catch-all route
