@@ -13,7 +13,7 @@ services:
       PORT: "5000"
       SSO_JWT_SECRET: ${SSO_JWT_SECRET}
       SSO_LOGIN_URL: ${SSO_LOGIN_URL:-https://sso.aceelectronics.com}
-      APP_URL: ${APP_URL:-https://imageflow.aceelectronics.com}
+      APP_URL: ${APP_URL:-https://image.aceelectronics.com}
       APP_DOMAIN: ${APP_DOMAIN:-aceelectronics.com}
       AZURE_TENANT_ID: ${AZURE_TENANT_ID:-}
       AZURE_CLIENT_ID: ${AZURE_CLIENT_ID:-}

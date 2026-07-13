@@ -178,6 +178,7 @@ function refreshSsoTokenIfNeeded(
 export function buildSsoLoginUrl(req: Request, nextPath = "/"): string | null {
   const ssoBase = process.env.SSO_LOGIN_URL;
   if (!ssoBase) return null;
+  // APP_URL must be the public origin (https://image.aceelectronics.com) so SSO redirect_uri matches NPM/DNS.
   const appUrl = process.env.APP_URL || `${req.protocol}://${req.get("host")}`;
   const callback = `${appUrl}/api/auth/sso/callback`;
   const withNext =
