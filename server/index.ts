@@ -68,7 +68,7 @@ app.use((req, res, next) => {
     throw err;
   });
 
-  // Redirect unauthenticated browser navigations to ACE SSO before SPA shell
+  // Soft SSO middleware: refresh cookie if present; client shows LoginPage when needed
   app.use(requireAceSsoSpa("imageflow"));
 
   // importantly only setup vite in development and after

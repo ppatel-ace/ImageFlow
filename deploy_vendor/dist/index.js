@@ -549,15 +549,12 @@ function requireAceSsoApp(app2) {
     next();
   };
 }
-function requireAceSsoSpa(app2) {
+function requireAceSsoSpa(_app) {
   return (req, res, next) => {
     if (req.path.startsWith("/api/") || req.path === "/health") return next();
     if (req.method !== "GET" && req.method !== "HEAD") return next();
-    const payload = tryAceSsoFromRequest(req, res);
-    if (payload && hasAppAccess(payload, app2)) return next();
-    const loginUrl = buildSsoLoginUrl(req, req.originalUrl || "/");
-    if (loginUrl) return res.redirect(loginUrl);
-    return res.status(401).send("Unauthorized \u2014 SSO not configured");
+    tryAceSsoFromRequest(req, res);
+    return next();
   };
 }
 function registerAceSsoRoutes(app2, appSlug = "imageflow") {

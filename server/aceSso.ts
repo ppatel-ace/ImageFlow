@@ -225,18 +225,17 @@ export function requireAceSsoApp(app: AceAppSlug) {
   };
 }
 
-/** Redirect browser navigations to SSO when unauthenticated (SPA shell). */
-export function requireAceSsoSpa(app: AceAppSlug) {
+/**
+ * Serve the SPA without hard-redirecting to SSO. When a cookie is present,
+ * refresh it. Login UX is handled by the client (LoginPage).
+ * API routes remain gated via requireAceSsoApp.
+ */
+export function requireAceSsoSpa(_app: AceAppSlug) {
   return (req: AceAuthRequest, res: Response, next: NextFunction): void => {
     if (req.path.startsWith("/api/") || req.path === "/health") return next();
     if (req.method !== "GET" && req.method !== "HEAD") return next();
-
-    const payload = tryAceSsoFromRequest(req, res);
-    if (payload && hasAppAccess(payload, app)) return next();
-
-    const loginUrl = buildSsoLoginUrl(req, req.originalUrl || "/");
-    if (loginUrl) return res.redirect(loginUrl);
-    return res.status(401).send("Unauthorized — SSO not configured");
+    tryAceSsoFromRequest(req, res);
+    return next();
   };
 }
 
