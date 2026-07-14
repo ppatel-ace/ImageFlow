@@ -1,7 +1,7 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import multer from "multer";
-import { checkForNewExcelFile, isExcelSftpSyncAvailable, isExcelSyncAvailable } from "./excelSync";
+import { checkForNewExcelFile, isExcelSyncAvailable } from "./excelSync";
 import { uploadFileToSharePoint } from "./sharepoint";
 import {
   getAllWorkOrders,
@@ -14,7 +14,7 @@ import { requireAceSsoApp } from "./aceSso";
 const upload = multer({ storage: multer.memoryStorage() });
 const requireImageflow = requireAceSsoApp("imageflow");
 
-/** If WO cache is empty but sync is configured, pull Excel once before answering. */
+/** If WO cache is empty but SFTP is configured, pull Excel once before answering. */
 async function ensureWorkOrderDataLoaded(): Promise<void> {
   if (getAllWorkOrders().length > 0 || !isExcelSyncAvailable()) return;
   const syncResult = await checkForNewExcelFile();
@@ -121,7 +121,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Excel/work-order sync: SFTP (Sage dump) preferred, Google Drive fallback
+  // Excel / work-order sync via SFTP (Sage Open Orders dump)
   app.post("/api/check-excel-updates", requireImageflow, async (req, res) => {
     try {
       const syncResult = await checkForNewExcelFile();
@@ -140,15 +140,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
-      const source = isExcelSftpSyncAvailable() ? "SFTP" : "Google Drive";
       res.json({
         success: true,
-        message: `Excel data updated successfully from ${source}`,
+        message: "Excel data updated successfully from SFTP",
         fileName: syncResult.fileName,
         fileDate: syncResult.fileDate,
         originalFileName: syncResult.originalFileName,
         currentFile: reloadResult.fileName,
-        source,
+        source: "SFTP",
       });
     } catch (error: any) {
       console.error("Error checking for Excel updates:", error);

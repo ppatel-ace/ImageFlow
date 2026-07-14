@@ -1,5 +1,5 @@
 import cron from 'node-cron';
-import { checkForNewExcelFile, isExcelSyncAvailable, isExcelSftpSyncAvailable } from './excelSync';
+import { checkForNewExcelFile, isExcelSyncAvailable } from './excelSync';
 import { reloadExcelData } from './excelParser';
 
 async function runExcelUpdate(label: string): Promise<void> {
@@ -33,16 +33,13 @@ async function runExcelUpdate(label: string): Promise<void> {
 export function initializeScheduler() {
   if (!isExcelSyncAvailable()) {
     console.warn(
-      '[Scheduler] Excel sync scheduler disabled (configure SFTP_HOST/SFTP_USER/SFTP_PASSWORD, or Replit Drive connectors). SharePoint image uploads are unaffected.',
+      '[Scheduler] Excel SFTP sync disabled — set SFTP_HOST, SFTP_USER, and SFTP_PASSWORD. SharePoint image uploads are unaffected.',
     );
     return;
   }
 
-  const source = isExcelSftpSyncAvailable() ? 'SFTP' : 'Google Drive';
-  console.log(`[Scheduler] Initializing Excel update scheduler (${source})...`);
+  console.log('[Scheduler] Initializing Excel SFTP update scheduler...');
 
-  // Cron expression: "20 7 * * *" runs at 7:20 AM
-  // Using timezone: America/New_York for EST/EDT handling
   const cronExpression = '20 7 * * *';
 
   cron.schedule(cronExpression, async () => {
@@ -57,19 +54,18 @@ export function initializeScheduler() {
       hour12: false
     });
 
-    await runExcelUpdate(`Running scheduled Excel update check at ${timestamp} EST/EDT`);
+    await runExcelUpdate(`Running scheduled Excel SFTP update at ${timestamp} EST/EDT`);
   }, {
     timezone: 'America/New_York'
   });
 
-  console.log('[Scheduler] ✓ Excel update scheduler initialized (runs daily at 7:20 AM EST/EDT)');
+  console.log('[Scheduler] ✓ Excel SFTP scheduler initialized (daily at 7:20 AM EST/EDT)');
 
-  // Also run an initial check 10 seconds after server startup
   setTimeout(async () => {
     try {
-      await runExcelUpdate('Running initial Excel update check on server startup...');
+      await runExcelUpdate('Running initial Excel SFTP update check on server startup...');
     } catch (error: any) {
       console.error('[Scheduler] Initial update check error:', error?.message || String(error));
     }
-  }, 10000); // 10 seconds delay
+  }, 10000);
 }

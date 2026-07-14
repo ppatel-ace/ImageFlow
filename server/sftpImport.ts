@@ -2,7 +2,7 @@ import SftpClient from "ssh2-sftp-client";
 import { writeFileSync, mkdirSync, existsSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
-import type { ExcelCheckResult } from "./gdrive";
+import type { ExcelCheckResult } from "./excelTypes";
 
 const DEFAULT_REMOTE_DIRS = ["/mnt/sage", "/mnt/import"];
 /** Matches daily dumps like "Open Order All Qty Only_20260714.xlsx" (spacing/underscore variants OK). */

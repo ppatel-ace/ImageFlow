@@ -134,7 +134,7 @@ export function getAllWorkOrders(): string[] {
     const latestFile = getLatestExcelFile();
     if (!latestFile) {
       console.warn(
-        '[excelParser] No OpenOrders Excel file in attached_assets — work-order lookup empty until a file is mounted or Drive sync runs.',
+        '[excelParser] No OpenOrders Excel file in attached_assets — work-order lookup empty until a file is mounted or SFTP sync runs.',
       );
       return;
     }

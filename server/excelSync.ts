@@ -1,37 +1,33 @@
-import {
-  checkForNewExcelFile as checkForNewExcelFileViaDrive,
-  isExcelDriveSyncAvailable,
-  type ExcelCheckResult,
-} from "./gdrive";
+import type { ExcelCheckResult } from "./excelTypes";
 import {
   checkForNewExcelFileViaSftp,
   isExcelSftpSyncAvailable,
 } from "./sftpImport";
 
 export type { ExcelCheckResult };
-export { isExcelDriveSyncAvailable, isExcelSftpSyncAvailable };
+export { isExcelSftpSyncAvailable };
 
-/** True when either SFTP or Google Drive Excel sync can run. */
+/** True when SFTP Excel sync credentials are configured. */
 export function isExcelSyncAvailable(): boolean {
-  return isExcelSftpSyncAvailable() || isExcelDriveSyncAvailable();
+  return isExcelSftpSyncAvailable();
 }
 
 /**
- * Prefer SFTP (production Sage dump) when configured; fall back to Google Drive.
+ * Pull the newest Open Orders Excel from the Sage SFTP share.
+ * Google Drive is no longer used for work-order / part-number sync.
  */
 export async function checkForNewExcelFile(): Promise<ExcelCheckResult> {
-  if (isExcelSftpSyncAvailable()) {
-    const sftpResult = await checkForNewExcelFileViaSftp();
-    if (sftpResult.success) {
-      return sftpResult;
-    }
-    console.warn(`[excelSync] SFTP sync failed: ${sftpResult.message}`);
-
-    if (!isExcelDriveSyncAvailable()) {
-      return sftpResult;
-    }
-    console.log("[excelSync] Falling back to Google Drive Excel sync…");
+  if (!isExcelSftpSyncAvailable()) {
+    return {
+      success: false,
+      message:
+        "Excel SFTP sync not configured. Set SFTP_HOST, SFTP_USER, and SFTP_PASSWORD.",
+    };
   }
 
-  return checkForNewExcelFileViaDrive();
+  const result = await checkForNewExcelFileViaSftp();
+  if (result.success) {
+    return { ...result, source: "sftp" };
+  }
+  return result;
 }

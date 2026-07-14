@@ -588,7 +588,7 @@ export default function ImageUploadForm() {
           <div className="text-xs text-muted-foreground text-center">
             <p className="flex items-center gap-1 justify-center">
               <Check className="w-3 h-3 text-green-600" />
-              Google Drive KSAlert folder - Auto-updates: Daily at 7:20 AM EST & on page load
+              Sage SFTP Open Orders — Auto-updates: Daily at 7:20 AM EST & on page load
             </p>
             {lastAutoCheck && (
               <p className="text-xs">
