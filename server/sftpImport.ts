@@ -22,14 +22,42 @@ function envFlagEnabled(name: string): boolean | null {
   return null;
 }
 
+/**
+ * Resolve SFTP password.
+ * Prefer SFTP_PASSWORD_B64 — Portainer/Compose often collapses "$$" → "$" in plain values.
+ */
+function resolveSftpPassword(): string | undefined {
+  const b64 = process.env.SFTP_PASSWORD_B64?.trim();
+  if (b64) {
+    try {
+      return Buffer.from(b64, "base64").toString("utf8");
+    } catch {
+      throw new Error("SFTP_PASSWORD_B64 is not valid base64");
+    }
+  }
+
+  const plain = process.env.SFTP_PASSWORD;
+  if (!plain) return undefined;
+
+  // Compose/Portainer often collapses "$$" → "$". Restore doubles by default.
+  // In String.replace, "$$$$" in the replacement yields two literal "$" characters.
+  const escapeMode = process.env.SFTP_PASSWORD_DOLLAR_ESCAPE?.trim().toLowerCase();
+  if (escapeMode === "off" || escapeMode === "false" || escapeMode === "0") {
+    return plain;
+  }
+  if (plain.includes("$") && !plain.includes("$$")) {
+    return plain.replace(/\$/g, "$$$$");
+  }
+  return plain;
+}
+
 export function isExcelSftpSyncAvailable(): boolean {
   const flag = envFlagEnabled("ENABLE_EXCEL_SFTP_SYNC");
   if (flag === false) return false;
-  // Always require credentials — a lone ENABLE_EXCEL_SFTP_SYNC=true is not enough.
   return Boolean(
     process.env.SFTP_HOST?.trim() &&
       process.env.SFTP_USER?.trim() &&
-      process.env.SFTP_PASSWORD,
+      resolveSftpPassword(),
   );
 }
 
@@ -39,15 +67,26 @@ export function getSftpEnvStatus(): {
   host: boolean;
   user: boolean;
   password: boolean;
+  passwordSource: "b64" | "plain" | "none";
+  passwordLength: number;
+  passwordDollarCount: number;
   port: string;
   remoteDirs: string;
   enableFlag: string | null;
 } {
+  const resolved = resolveSftpPassword();
   return {
     configured: isExcelSftpSyncAvailable(),
     host: Boolean(process.env.SFTP_HOST?.trim()),
     user: Boolean(process.env.SFTP_USER?.trim()),
-    password: Boolean(process.env.SFTP_PASSWORD),
+    password: Boolean(resolved),
+    passwordSource: process.env.SFTP_PASSWORD_B64?.trim()
+      ? "b64"
+      : process.env.SFTP_PASSWORD
+        ? "plain"
+        : "none",
+    passwordLength: resolved?.length ?? 0,
+    passwordDollarCount: (resolved?.match(/\$/g) || []).length,
     port: process.env.SFTP_PORT?.trim() || "22",
     remoteDirs: process.env.SFTP_REMOTE_DIRS?.trim() || "/mnt/sage,/mnt/import",
     enableFlag: process.env.ENABLE_EXCEL_SFTP_SYNC?.trim() || null,
@@ -57,9 +96,11 @@ export function getSftpEnvStatus(): {
 function getSftpConfig() {
   const host = process.env.SFTP_HOST?.trim();
   const user = process.env.SFTP_USER?.trim();
-  const password = process.env.SFTP_PASSWORD;
+  const password = resolveSftpPassword();
   if (!host || !user || !password) {
-    throw new Error("SFTP_HOST, SFTP_USER, and SFTP_PASSWORD are required for Excel SFTP sync");
+    throw new Error(
+      "SFTP_HOST, SFTP_USER, and SFTP_PASSWORD (or SFTP_PASSWORD_B64) are required",
+    );
   }
 
   const port = parseInt(process.env.SFTP_PORT?.trim() || "22", 10);
@@ -69,6 +110,7 @@ function getSftpConfig() {
     username: user,
     password,
     readyTimeout: 20000,
+    tryKeyboard: true,
   };
 }
 

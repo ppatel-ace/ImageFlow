@@ -44,19 +44,43 @@ function envFlagEnabled(name) {
   if (flag === "1" || flag === "true" || flag === "on" || flag === "yes") return true;
   return null;
 }
+function resolveSftpPassword() {
+  const b64 = process.env.SFTP_PASSWORD_B64?.trim();
+  if (b64) {
+    try {
+      return Buffer.from(b64, "base64").toString("utf8");
+    } catch {
+      throw new Error("SFTP_PASSWORD_B64 is not valid base64");
+    }
+  }
+  const plain = process.env.SFTP_PASSWORD;
+  if (!plain) return void 0;
+  const escapeMode = process.env.SFTP_PASSWORD_DOLLAR_ESCAPE?.trim().toLowerCase();
+  if (escapeMode === "off" || escapeMode === "false" || escapeMode === "0") {
+    return plain;
+  }
+  if (plain.includes("$") && !plain.includes("$$")) {
+    return plain.replace(/\$/g, "$$$$");
+  }
+  return plain;
+}
 function isExcelSftpSyncAvailable() {
   const flag = envFlagEnabled("ENABLE_EXCEL_SFTP_SYNC");
   if (flag === false) return false;
   return Boolean(
-    process.env.SFTP_HOST?.trim() && process.env.SFTP_USER?.trim() && process.env.SFTP_PASSWORD
+    process.env.SFTP_HOST?.trim() && process.env.SFTP_USER?.trim() && resolveSftpPassword()
   );
 }
 function getSftpEnvStatus() {
+  const resolved = resolveSftpPassword();
   return {
     configured: isExcelSftpSyncAvailable(),
     host: Boolean(process.env.SFTP_HOST?.trim()),
     user: Boolean(process.env.SFTP_USER?.trim()),
-    password: Boolean(process.env.SFTP_PASSWORD),
+    password: Boolean(resolved),
+    passwordSource: process.env.SFTP_PASSWORD_B64?.trim() ? "b64" : process.env.SFTP_PASSWORD ? "plain" : "none",
+    passwordLength: resolved?.length ?? 0,
+    passwordDollarCount: (resolved?.match(/\$/g) || []).length,
     port: process.env.SFTP_PORT?.trim() || "22",
     remoteDirs: process.env.SFTP_REMOTE_DIRS?.trim() || "/mnt/sage,/mnt/import",
     enableFlag: process.env.ENABLE_EXCEL_SFTP_SYNC?.trim() || null
@@ -65,9 +89,11 @@ function getSftpEnvStatus() {
 function getSftpConfig() {
   const host = process.env.SFTP_HOST?.trim();
   const user = process.env.SFTP_USER?.trim();
-  const password = process.env.SFTP_PASSWORD;
+  const password = resolveSftpPassword();
   if (!host || !user || !password) {
-    throw new Error("SFTP_HOST, SFTP_USER, and SFTP_PASSWORD are required for Excel SFTP sync");
+    throw new Error(
+      "SFTP_HOST, SFTP_USER, and SFTP_PASSWORD (or SFTP_PASSWORD_B64) are required"
+    );
   }
   const port = parseInt(process.env.SFTP_PORT?.trim() || "22", 10);
   return {
@@ -75,7 +101,8 @@ function getSftpConfig() {
     port: Number.isFinite(port) ? port : 22,
     username: user,
     password,
-    readyTimeout: 2e4
+    readyTimeout: 2e4,
+    tryKeyboard: true
   };
 }
 function getRemoteDirs() {
@@ -380,7 +407,7 @@ async function uploadFileToSharePoint(customerName, dept, workOrderNumber, fileN
 }
 
 // server/excelParser.ts
-import readXlsxFile from "read-excel-file/node";
+import { readSheet } from "read-excel-file/node";
 import { readdirSync } from "fs";
 import { fileURLToPath as fileURLToPath2 } from "url";
 import { dirname as dirname2, join as join2 } from "path";
@@ -389,7 +416,7 @@ var __dirname = dirname2(__filename);
 var cachedData = null;
 var currentFileName = null;
 async function parseExcelFile(filePath) {
-  const rows = await readXlsxFile(filePath);
+  const rows = await readSheet(filePath);
   const workOrderData = [];
   for (let i = 1; i < rows.length; i++) {
     const row = rows[i];
@@ -953,6 +980,9 @@ app.get("/health", (_req, res) => {
       hostSet: sftp.host,
       userSet: sftp.user,
       passwordSet: sftp.password,
+      passwordSource: sftp.passwordSource,
+      passwordLength: sftp.passwordLength,
+      passwordDollarCount: sftp.passwordDollarCount,
       port: sftp.port,
       remoteDirs: sftp.remoteDirs,
       enableFlag: sftp.enableFlag
@@ -1025,7 +1055,7 @@ app.use((req, res, next) => {
       log(`serving on port ${port}`);
       const sftp = getSftpEnvStatus();
       console.log(
-        `[SFTP] configured=${sftp.configured} hostSet=${sftp.host} userSet=${sftp.user} passwordSet=${sftp.password} port=${sftp.port} dirs=${sftp.remoteDirs} ENABLE_EXCEL_SFTP_SYNC=${sftp.enableFlag ?? "(unset)"}`
+        `[SFTP] configured=${sftp.configured} hostSet=${sftp.host} userSet=${sftp.user} passwordSet=${sftp.password} passwordSource=${sftp.passwordSource} passwordLen=${sftp.passwordLength} dollarCount=${sftp.passwordDollarCount} port=${sftp.port} dirs=${sftp.remoteDirs} ENABLE_EXCEL_SFTP_SYNC=${sftp.enableFlag ?? "(unset)"}`
       );
       initializeScheduler();
     }

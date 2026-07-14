@@ -35,6 +35,9 @@ app.get("/health", (_req, res) => {
       hostSet: sftp.host,
       userSet: sftp.user,
       passwordSet: sftp.password,
+      passwordSource: sftp.passwordSource,
+      passwordLength: sftp.passwordLength,
+      passwordDollarCount: sftp.passwordDollarCount,
       port: sftp.port,
       remoteDirs: sftp.remoteDirs,
       enableFlag: sftp.enableFlag,
@@ -124,7 +127,7 @@ app.use((req, res, next) => {
 
       const sftp = getSftpEnvStatus();
       console.log(
-        `[SFTP] configured=${sftp.configured} hostSet=${sftp.host} userSet=${sftp.user} passwordSet=${sftp.password} port=${sftp.port} dirs=${sftp.remoteDirs} ENABLE_EXCEL_SFTP_SYNC=${sftp.enableFlag ?? "(unset)"}`,
+        `[SFTP] configured=${sftp.configured} hostSet=${sftp.host} userSet=${sftp.user} passwordSet=${sftp.password} passwordSource=${sftp.passwordSource} passwordLen=${sftp.passwordLength} dollarCount=${sftp.passwordDollarCount} port=${sftp.port} dirs=${sftp.remoteDirs} ENABLE_EXCEL_SFTP_SYNC=${sftp.enableFlag ?? "(unset)"}`,
       );
 
       initializeScheduler();
