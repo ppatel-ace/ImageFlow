@@ -125,6 +125,192 @@ async function checkForNewExcelFile() {
   }
 }
 
+// server/sftpImport.ts
+import SftpClient from "ssh2-sftp-client";
+import { writeFileSync as writeFileSync2, mkdirSync, existsSync } from "fs";
+import { join as join2, dirname as dirname2 } from "path";
+import { fileURLToPath as fileURLToPath2 } from "url";
+var DEFAULT_REMOTE_DIRS = ["/mnt/sage", "/mnt/import"];
+var OPEN_ORDER_PATTERN = /^open\s*order\s*all\s*qty\s*only[_-\s].+\.xlsx$/i;
+function envFlagEnabled(name) {
+  const flag = process.env[name]?.trim().toLowerCase();
+  if (flag === "0" || flag === "false" || flag === "off" || flag === "no") return false;
+  if (flag === "1" || flag === "true" || flag === "on" || flag === "yes") return true;
+  return null;
+}
+function isExcelSftpSyncAvailable() {
+  const flag = envFlagEnabled("ENABLE_EXCEL_SFTP_SYNC");
+  if (flag === false) return false;
+  if (flag === true) return true;
+  return Boolean(
+    process.env.SFTP_HOST?.trim() && process.env.SFTP_USER?.trim() && process.env.SFTP_PASSWORD
+  );
+}
+function getSftpConfig() {
+  const host = process.env.SFTP_HOST?.trim();
+  const user = process.env.SFTP_USER?.trim();
+  const password = process.env.SFTP_PASSWORD;
+  if (!host || !user || !password) {
+    throw new Error("SFTP_HOST, SFTP_USER, and SFTP_PASSWORD are required for Excel SFTP sync");
+  }
+  const port = parseInt(process.env.SFTP_PORT?.trim() || "22", 10);
+  return {
+    host,
+    port: Number.isFinite(port) ? port : 22,
+    username: user,
+    password,
+    readyTimeout: 2e4
+  };
+}
+function getRemoteDirs() {
+  const raw = process.env.SFTP_REMOTE_DIRS?.trim();
+  if (!raw) return DEFAULT_REMOTE_DIRS;
+  return raw.split(",").map((d) => d.trim()).filter(Boolean);
+}
+function matchesOpenOrderFile(name) {
+  return OPEN_ORDER_PATTERN.test(name);
+}
+var MONTH_NAMES = {
+  january: "01",
+  february: "02",
+  march: "03",
+  april: "04",
+  may: "05",
+  june: "06",
+  july: "07",
+  august: "08",
+  september: "09",
+  october: "10",
+  november: "11",
+  december: "12"
+};
+function parseEmbeddedDate(name) {
+  const textual = name.match(
+    /(\d{1,2})\s+(january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{4})/i
+  );
+  if (textual) {
+    const day = textual[1].padStart(2, "0");
+    const month = MONTH_NAMES[textual[2].toLowerCase()];
+    const year = textual[3];
+    if (month) return `${year}${month}${day}`;
+  }
+  const digits = name.match(/(\d{8}|\d{4}-\d{2}-\d{2}|\d{2}-\d{2}-\d{4})/);
+  if (!digits) return null;
+  const token = digits[1];
+  if (/^\d{8}$/.test(token)) return token;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(token)) return token.replace(/-/g, "");
+  if (/^\d{2}-\d{2}-\d{4}$/.test(token)) {
+    const [mm, dd, yyyy] = token.split("-");
+    return `${yyyy}${mm}${dd}`;
+  }
+  return null;
+}
+function sortKeyForFile(name, modifyTime) {
+  return parseEmbeddedDate(name) || String(modifyTime).padStart(15, "0");
+}
+function formatFileDate(name, modifyTime) {
+  const ymd = parseEmbeddedDate(name);
+  if (ymd && ymd.length === 8) {
+    return `${ymd.slice(0, 4)}-${ymd.slice(4, 6)}-${ymd.slice(6, 8)}`;
+  }
+  return new Date(modifyTime).toISOString().slice(0, 10);
+}
+async function listMatchingFiles(sftp, remoteDir) {
+  try {
+    const entries = await sftp.list(remoteDir);
+    return entries.filter((entry) => entry.type === "-" && matchesOpenOrderFile(entry.name)).map((entry) => ({
+      name: entry.name,
+      remotePath: `${remoteDir.replace(/\/$/, "")}/${entry.name}`,
+      modifyTime: entry.modifyTime || 0,
+      size: entry.size || 0
+    }));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(`[sftp] Could not list ${remoteDir}: ${message}`);
+    return [];
+  }
+}
+async function checkForNewExcelFileViaSftp() {
+  if (!isExcelSftpSyncAvailable()) {
+    return {
+      success: false,
+      message: "Excel SFTP sync not configured (set SFTP_HOST, SFTP_USER, SFTP_PASSWORD)"
+    };
+  }
+  const sftp = new SftpClient();
+  try {
+    const config = getSftpConfig();
+    await sftp.connect(config);
+    const remoteDirs = getRemoteDirs();
+    const allFiles = [];
+    for (const dir of remoteDirs) {
+      const files = await listMatchingFiles(sftp, dir);
+      allFiles.push(...files);
+    }
+    if (allFiles.length === 0) {
+      return {
+        success: false,
+        message: `No Open Order All Qty Only Excel files found in ${remoteDirs.join(" or ")}`
+      };
+    }
+    allFiles.sort(
+      (a, b) => sortKeyForFile(b.name, b.modifyTime).localeCompare(sortKeyForFile(a.name, a.modifyTime))
+    );
+    const latest = allFiles[0];
+    const buffer = await sftp.get(latest.remotePath);
+    const __filename2 = fileURLToPath2(import.meta.url);
+    const __dirname2 = dirname2(__filename2);
+    const assetsDir = join2(__dirname2, "..", "attached_assets");
+    if (!existsSync(assetsDir)) {
+      mkdirSync(assetsDir, { recursive: true });
+    }
+    const newFileName = `OpenOrdersAllQtyOnly_${Date.now()}.xlsx`;
+    writeFileSync2(join2(assetsDir, newFileName), buffer);
+    console.log(
+      `[sftp] Downloaded ${latest.name} from ${latest.remotePath} \u2192 ${newFileName} (${buffer.length} bytes)`
+    );
+    return {
+      success: true,
+      message: `Excel file ${latest.name} successfully downloaded via SFTP`,
+      fileName: newFileName,
+      fileDate: formatFileDate(latest.name, latest.modifyTime),
+      originalFileName: latest.name
+    };
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    console.error("[sftp] Error downloading Excel file:", errorMessage);
+    return {
+      success: false,
+      message: errorMessage,
+      error: errorMessage
+    };
+  } finally {
+    try {
+      await sftp.end();
+    } catch {
+    }
+  }
+}
+
+// server/excelSync.ts
+function isExcelSyncAvailable() {
+  return isExcelSftpSyncAvailable() || isExcelDriveSyncAvailable();
+}
+async function checkForNewExcelFile2() {
+  if (isExcelSftpSyncAvailable()) {
+    const sftpResult = await checkForNewExcelFileViaSftp();
+    if (sftpResult.success) {
+      return sftpResult;
+    }
+    console.warn(`[excelSync] SFTP sync failed: ${sftpResult.message}`);
+    if (!isExcelDriveSyncAvailable()) {
+      return sftpResult;
+    }
+    console.log("[excelSync] Falling back to Google Drive Excel sync\u2026");
+  }
+  return checkForNewExcelFile();
+}
+
 // server/sharepoint.ts
 var tokenCache = null;
 var GRAPH_BASE = "https://graph.microsoft.us/v1.0";
@@ -273,10 +459,10 @@ async function uploadFileToSharePoint(customerName, dept, workOrderNumber, fileN
 // server/excelParser.ts
 import readXlsxFile from "read-excel-file/node";
 import { readdirSync } from "fs";
-import { fileURLToPath as fileURLToPath2 } from "url";
-import { dirname as dirname2, join as join2 } from "path";
-var __filename = fileURLToPath2(import.meta.url);
-var __dirname = dirname2(__filename);
+import { fileURLToPath as fileURLToPath3 } from "url";
+import { dirname as dirname3, join as join3 } from "path";
+var __filename = fileURLToPath3(import.meta.url);
+var __dirname = dirname3(__filename);
 var cachedData = null;
 var currentFileName = null;
 async function parseExcelFile(filePath) {
@@ -302,7 +488,7 @@ async function parseExcelFile(filePath) {
 }
 function getLatestExcelFile() {
   try {
-    const assetsPath = join2(__dirname, "..", "attached_assets");
+    const assetsPath = join3(__dirname, "..", "attached_assets");
     const files = readdirSync(assetsPath);
     const excelFiles = files.filter(
       (file) => file.startsWith("OpenOrdersAllQtyOnly_") && file.endsWith(".xlsx")
@@ -333,7 +519,7 @@ async function reloadExcelData() {
     if (!latestFile) {
       return { success: false, error: "No Excel file found" };
     }
-    const excelPath = join2(__dirname, "..", "attached_assets", latestFile);
+    const excelPath = join3(__dirname, "..", "attached_assets", latestFile);
     cachedData = await parseExcelFile(excelPath);
     currentFileName = latestFile;
     return { success: true, fileName: latestFile };
@@ -370,7 +556,7 @@ function getAllWorkOrders() {
       );
       return;
     }
-    const excelPath = join2(__dirname, "..", "attached_assets", latestFile);
+    const excelPath = join3(__dirname, "..", "attached_assets", latestFile);
     cachedData = await parseExcelFile(excelPath);
     currentFileName = latestFile;
     console.log(`[excelParser] Loaded initial Excel file: ${latestFile}`);
@@ -691,9 +877,9 @@ async function registerRoutes(app2) {
   });
   app2.post("/api/check-excel-updates", requireImageflow, async (req, res) => {
     try {
-      const driveResult = await checkForNewExcelFile();
-      if (!driveResult.success) {
-        return res.json(driveResult);
+      const syncResult = await checkForNewExcelFile2();
+      if (!syncResult.success) {
+        return res.json(syncResult);
       }
       const reloadResult = await reloadExcelData();
       if (!reloadResult.success) {
@@ -703,12 +889,15 @@ async function registerRoutes(app2) {
           error: reloadResult.error
         });
       }
+      const source = isExcelSftpSyncAvailable() ? "SFTP" : "Google Drive";
       res.json({
         success: true,
-        message: "Excel data updated successfully from Google Drive",
-        fileName: driveResult.fileName,
-        fileDate: driveResult.fileDate,
-        currentFile: reloadResult.fileName
+        message: `Excel data updated successfully from ${source}`,
+        fileName: syncResult.fileName,
+        fileDate: syncResult.fileDate,
+        originalFileName: syncResult.originalFileName,
+        currentFile: reloadResult.fileName,
+        source
       });
     } catch (error) {
       console.error("Error checking for Excel updates:", error);
@@ -725,14 +914,35 @@ async function registerRoutes(app2) {
 
 // server/scheduler.ts
 import cron from "node-cron";
+async function runExcelUpdate(label) {
+  console.log(`[Scheduler] ${label}`);
+  try {
+    const syncResult = await checkForNewExcelFile2();
+    if (!syncResult.success) {
+      console.log(`[Scheduler] No new Excel file found: ${syncResult.message}`);
+      return;
+    }
+    console.log(`[Scheduler] New Excel file found: ${syncResult.originalFileName}`);
+    const reloadResult = await reloadExcelData();
+    if (!reloadResult.success) {
+      console.error(`[Scheduler] Failed to reload Excel data: ${reloadResult.error}`);
+      return;
+    }
+    console.log(`[Scheduler] \u2713 Excel data successfully updated from ${syncResult.originalFileName}`);
+    console.log(`[Scheduler] \u2713 Current file: ${reloadResult.fileName}`);
+  } catch (error) {
+    console.error("[Scheduler] Error during scheduled Excel update:", error.message);
+  }
+}
 function initializeScheduler() {
-  if (!isExcelDriveSyncAvailable()) {
+  if (!isExcelSyncAvailable()) {
     console.warn(
-      "[Scheduler] Excel Drive sync scheduler disabled (no Replit connectors). SharePoint image uploads are unaffected."
+      "[Scheduler] Excel sync scheduler disabled (configure SFTP_HOST/SFTP_USER/SFTP_PASSWORD, or Replit Drive connectors). SharePoint image uploads are unaffected."
     );
     return;
   }
-  console.log("[Scheduler] Initializing Excel update scheduler...");
+  const source = isExcelSftpSyncAvailable() ? "SFTP" : "Google Drive";
+  console.log(`[Scheduler] Initializing Excel update scheduler (${source})...`);
   const cronExpression = "20 7 * * *";
   cron.schedule(cronExpression, async () => {
     const timestamp = (/* @__PURE__ */ new Date()).toLocaleString("en-US", {
@@ -745,52 +955,16 @@ function initializeScheduler() {
       second: "2-digit",
       hour12: false
     });
-    console.log(`[Scheduler] Running scheduled Excel update check at ${timestamp} EST/EDT`);
-    try {
-      const driveResult = await checkForNewExcelFile();
-      if (!driveResult.success) {
-        console.log(`[Scheduler] No new Excel file found: ${driveResult.message}`);
-        return;
-      }
-      console.log(`[Scheduler] New Excel file found: ${driveResult.originalFileName}`);
-      const reloadResult = await reloadExcelData();
-      if (!reloadResult.success) {
-        console.error(`[Scheduler] Failed to reload Excel data: ${reloadResult.error}`);
-        return;
-      }
-      console.log(`[Scheduler] \u2713 Excel data successfully updated from ${driveResult.originalFileName}`);
-      console.log(`[Scheduler] \u2713 Current file: ${reloadResult.fileName}`);
-    } catch (error) {
-      console.error("[Scheduler] Error during scheduled Excel update:", error.message);
-    }
+    await runExcelUpdate(`Running scheduled Excel update check at ${timestamp} EST/EDT`);
   }, {
     timezone: "America/New_York"
   });
   console.log("[Scheduler] \u2713 Excel update scheduler initialized (runs daily at 7:20 AM EST/EDT)");
   setTimeout(async () => {
-    console.log("[Scheduler] Running initial Excel update check on server startup...");
     try {
-      const driveResult = await checkForNewExcelFile();
-      if (driveResult.success) {
-        const reloadResult = await reloadExcelData();
-        if (reloadResult.success) {
-          console.log(`[Scheduler] \u2713 Initial update successful: ${driveResult.originalFileName}`);
-        }
-      } else {
-        const msg = driveResult.message || "";
-        if (msg.includes("Replit identity") || msg.includes("not configured")) {
-          console.warn(`[Scheduler] Initial Excel check skipped: ${msg}`);
-        } else {
-          console.log(`[Scheduler] Initial check: ${msg}`);
-        }
-      }
+      await runExcelUpdate("Running initial Excel update check on server startup...");
     } catch (error) {
-      const msg = error?.message || String(error);
-      if (String(msg).includes("Replit identity")) {
-        console.warn(`[Scheduler] Initial Excel check skipped: ${msg}`);
-      } else {
-        console.error("[Scheduler] Initial update check error:", msg);
-      }
+      console.error("[Scheduler] Initial update check error:", error?.message || String(error));
     }
   }, 1e4);
 }
@@ -798,7 +972,7 @@ function initializeScheduler() {
 // server/index.ts
 import path from "path";
 import fs from "fs";
-import { fileURLToPath as fileURLToPath3 } from "url";
+import { fileURLToPath as fileURLToPath4 } from "url";
 function log(message, source = "express") {
   const formattedTime = (/* @__PURE__ */ new Date()).toLocaleTimeString("en-US", {
     hour: "numeric",
@@ -853,7 +1027,7 @@ app.use((req, res, next) => {
     const { setupVite } = await import(viteModule);
     await setupVite(app, server);
   } else {
-    const __dirname2 = path.dirname(fileURLToPath3(import.meta.url));
+    const __dirname2 = path.dirname(fileURLToPath4(import.meta.url));
     const distPath = path.resolve(__dirname2, "public");
     if (!fs.existsSync(distPath)) {
       throw new Error(

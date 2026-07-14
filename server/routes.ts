@@ -1,7 +1,7 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import multer from "multer";
-import { checkForNewExcelFile } from "./gdrive";
+import { checkForNewExcelFile, isExcelSftpSyncAvailable } from "./excelSync";
 import { uploadFileToSharePoint } from "./sharepoint";
 import {
   getAllWorkOrders,
@@ -112,13 +112,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Excel/work-order sync remains on Google Drive / local (known gap)
+  // Excel/work-order sync: SFTP (Sage dump) preferred, Google Drive fallback
   app.post("/api/check-excel-updates", requireImageflow, async (req, res) => {
     try {
-      const driveResult = await checkForNewExcelFile();
+      const syncResult = await checkForNewExcelFile();
 
-      if (!driveResult.success) {
-        return res.json(driveResult);
+      if (!syncResult.success) {
+        return res.json(syncResult);
       }
 
       const reloadResult = await reloadExcelData();
@@ -131,12 +131,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
+      const source = isExcelSftpSyncAvailable() ? "SFTP" : "Google Drive";
       res.json({
         success: true,
-        message: "Excel data updated successfully from Google Drive",
-        fileName: driveResult.fileName,
-        fileDate: driveResult.fileDate,
+        message: `Excel data updated successfully from ${source}`,
+        fileName: syncResult.fileName,
+        fileDate: syncResult.fileDate,
+        originalFileName: syncResult.originalFileName,
         currentFile: reloadResult.fileName,
+        source,
       });
     } catch (error: any) {
       console.error("Error checking for Excel updates:", error);

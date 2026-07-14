@@ -27,7 +27,8 @@ Then commit and push `deploy_vendor/` along with the rest of the changes.
 
 - `docker-compose.yml` publishes the app on host port **8095** → container port 5000, on an isolated subnet (172.28.55.0/24) chosen to avoid collisions with existing stacks.
 - No environment variables are strictly required to boot (in-memory storage, no DB).
-- Google Drive uploads and the Excel auto-update job will NOT work in this deployment yet — they depend on Replit's proprietary connector system (`server/gdrive.ts`, `server/sharepoint.ts`), which has no equivalent outside Replit. This needs to be replaced with a Google Service Account before Drive functionality works outside Replit.
+- For work-order / part-number Excel sync in production, set `SFTP_HOST`, `SFTP_USER`, `SFTP_PASSWORD` (and optionally `SFTP_PORT`, `SFTP_REMOTE_DIRS`). Image uploads use SharePoint (`AZURE_*` / `SHAREPOINT_*`).
+- Google Drive Excel sync remains a Replit-only fallback (`server/gdrive.ts`).
 
 ## System Architecture
 
@@ -101,12 +102,12 @@ Then commit and push `deploy_vendor/` along with the rest of the changes.
 - Error reporting for Google Drive auth failures is enhanced to provide clear "reconnect Google Drive" messages.
 - Google Drive uploads now use a resumable protocol to handle large files, bypassing proxy size limits.
 
-**Excel Data Updates via Google Drive**
-- Automatic daily Excel file updates from a specific Google Drive folder (KSAlert) at 7:20 AM EST/EDT.
+**Excel Data Updates via SFTP (primary) / Google Drive (fallback)**
+- Automatic daily Excel file updates at 7:20 AM EST/EDT from the Sage SFTP share (`SFTP_HOST`, files matching `Open Order All Qty Only_<date>.xlsx` under `/mnt/sage` or `/mnt/import`).
+- Falls back to Google Drive KSAlert sync when SFTP is not configured (Replit connectors only).
 - Client-side checks on page load and scheduled checks when the app is open.
 - Manual "Check for Updates" button in UI.
-- Downloads and processes the latest Excel file to update work order data.
-- Uses Replit's Google Drive connector for authentication and API access.
+- Downloads and processes the latest Excel file to update work order / part number data.
 
 ## External Dependencies
 

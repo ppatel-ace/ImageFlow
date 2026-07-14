@@ -21,6 +21,12 @@ services:
       SHAREPOINT_SITE_HOSTNAME: ${SHAREPOINT_SITE_HOSTNAME:-aceelectronics.sharepoint.us}
       SHAREPOINT_SITE_PATH: ${SHAREPOINT_SITE_PATH:-/sites/jobtravelerphotos}
       SHAREPOINT_DRIVE_ID: ${SHAREPOINT_DRIVE_ID:-}
+      SFTP_HOST: ${SFTP_HOST:-}
+      SFTP_PORT: ${SFTP_PORT:-22}
+      SFTP_USER: ${SFTP_USER:-}
+      SFTP_PASSWORD: ${SFTP_PASSWORD:-}
+      SFTP_REMOTE_DIRS: ${SFTP_REMOTE_DIRS:-/mnt/sage,/mnt/import}
+      ENABLE_EXCEL_SFTP_SYNC: ${ENABLE_EXCEL_SFTP_SYNC:-}
     env_file:
       - path: .env
         required: false
