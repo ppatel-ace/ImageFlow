@@ -18,10 +18,20 @@ export function isExcelSyncAvailable(): boolean {
  */
 export async function checkForNewExcelFile(): Promise<ExcelCheckResult> {
   if (!isExcelSftpSyncAvailable()) {
+    const host = Boolean(process.env.SFTP_HOST?.trim());
+    const user = Boolean(process.env.SFTP_USER?.trim());
+    const password = Boolean(process.env.SFTP_PASSWORD);
+    const missing = [
+      !host && "SFTP_HOST",
+      !user && "SFTP_USER",
+      !password && "SFTP_PASSWORD",
+    ].filter(Boolean);
     return {
       success: false,
       message:
-        "Excel SFTP sync not configured. Set SFTP_HOST, SFTP_USER, and SFTP_PASSWORD.",
+        missing.length > 0
+          ? `Excel SFTP sync not configured — missing in the container: ${missing.join(", ")}. In Portainer these must be listed under the service environment (redeploy the updated docker-compose.yml).`
+          : "Excel SFTP sync is disabled (ENABLE_EXCEL_SFTP_SYNC=false).",
     };
   }
 

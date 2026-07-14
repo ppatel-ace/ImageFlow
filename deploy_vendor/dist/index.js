@@ -47,10 +47,20 @@ function envFlagEnabled(name) {
 function isExcelSftpSyncAvailable() {
   const flag = envFlagEnabled("ENABLE_EXCEL_SFTP_SYNC");
   if (flag === false) return false;
-  if (flag === true) return true;
   return Boolean(
     process.env.SFTP_HOST?.trim() && process.env.SFTP_USER?.trim() && process.env.SFTP_PASSWORD
   );
+}
+function getSftpEnvStatus() {
+  return {
+    configured: isExcelSftpSyncAvailable(),
+    host: Boolean(process.env.SFTP_HOST?.trim()),
+    user: Boolean(process.env.SFTP_USER?.trim()),
+    password: Boolean(process.env.SFTP_PASSWORD),
+    port: process.env.SFTP_PORT?.trim() || "22",
+    remoteDirs: process.env.SFTP_REMOTE_DIRS?.trim() || "/mnt/sage,/mnt/import",
+    enableFlag: process.env.ENABLE_EXCEL_SFTP_SYNC?.trim() || null
+  };
 }
 function getSftpConfig() {
   const host = process.env.SFTP_HOST?.trim();
@@ -204,9 +214,17 @@ function isExcelSyncAvailable() {
 }
 async function checkForNewExcelFile() {
   if (!isExcelSftpSyncAvailable()) {
+    const host = Boolean(process.env.SFTP_HOST?.trim());
+    const user = Boolean(process.env.SFTP_USER?.trim());
+    const password = Boolean(process.env.SFTP_PASSWORD);
+    const missing = [
+      !host && "SFTP_HOST",
+      !user && "SFTP_USER",
+      !password && "SFTP_PASSWORD"
+    ].filter(Boolean);
     return {
       success: false,
-      message: "Excel SFTP sync not configured. Set SFTP_HOST, SFTP_USER, and SFTP_PASSWORD."
+      message: missing.length > 0 ? `Excel SFTP sync not configured \u2014 missing in the container: ${missing.join(", ")}. In Portainer these must be listed under the service environment (redeploy the updated docker-compose.yml).` : "Excel SFTP sync is disabled (ENABLE_EXCEL_SFTP_SYNC=false)."
     };
   }
   const result = await checkForNewExcelFileViaSftp();
@@ -925,12 +943,26 @@ var app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 app.get("/health", (_req, res) => {
-  res.json({ ok: true, service: "imageflow" });
+  const sftp = getSftpEnvStatus();
+  res.json({
+    ok: true,
+    service: "imageflow",
+    ssoEnabled: isSsoEnabled(),
+    sftp: {
+      configured: sftp.configured,
+      hostSet: sftp.host,
+      userSet: sftp.user,
+      passwordSet: sftp.password,
+      port: sftp.port,
+      remoteDirs: sftp.remoteDirs,
+      enableFlag: sftp.enableFlag
+    }
+  });
 });
 registerAceSsoRoutes(app, "imageflow");
 app.use((req, res, next) => {
   const start = Date.now();
-  const path2 = req.path;
+  const pathName = req.path;
   let capturedJsonResponse = void 0;
   const originalResJson = res.json;
   res.json = function(bodyJson, ...args) {
@@ -939,8 +971,8 @@ app.use((req, res, next) => {
   };
   res.on("finish", () => {
     const duration = Date.now() - start;
-    if (path2.startsWith("/api")) {
-      let logLine = `${req.method} ${path2} ${res.statusCode} in ${duration}ms`;
+    if (pathName.startsWith("/api")) {
+      let logLine = `${req.method} ${pathName} ${res.statusCode} in ${duration}ms`;
       if (capturedJsonResponse) {
         logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
       }
@@ -983,12 +1015,19 @@ app.use((req, res, next) => {
     });
   }
   const port = parseInt(process.env.PORT || "5000", 10);
-  server.listen({
-    port,
-    host: "0.0.0.0",
-    reusePort: true
-  }, () => {
-    log(`serving on port ${port}`);
-    initializeScheduler();
-  });
+  server.listen(
+    {
+      port,
+      host: "0.0.0.0",
+      reusePort: true
+    },
+    () => {
+      log(`serving on port ${port}`);
+      const sftp = getSftpEnvStatus();
+      console.log(
+        `[SFTP] configured=${sftp.configured} hostSet=${sftp.host} userSet=${sftp.user} passwordSet=${sftp.password} port=${sftp.port} dirs=${sftp.remoteDirs} ENABLE_EXCEL_SFTP_SYNC=${sftp.enableFlag ?? "(unset)"}`
+      );
+      initializeScheduler();
+    }
+  );
 })();

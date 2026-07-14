@@ -25,12 +25,33 @@ function envFlagEnabled(name: string): boolean | null {
 export function isExcelSftpSyncAvailable(): boolean {
   const flag = envFlagEnabled("ENABLE_EXCEL_SFTP_SYNC");
   if (flag === false) return false;
-  if (flag === true) return true;
+  // Always require credentials — a lone ENABLE_EXCEL_SFTP_SYNC=true is not enough.
   return Boolean(
     process.env.SFTP_HOST?.trim() &&
       process.env.SFTP_USER?.trim() &&
       process.env.SFTP_PASSWORD,
   );
+}
+
+/** Safe diagnostics for logs /health — never includes the password. */
+export function getSftpEnvStatus(): {
+  configured: boolean;
+  host: boolean;
+  user: boolean;
+  password: boolean;
+  port: string;
+  remoteDirs: string;
+  enableFlag: string | null;
+} {
+  return {
+    configured: isExcelSftpSyncAvailable(),
+    host: Boolean(process.env.SFTP_HOST?.trim()),
+    user: Boolean(process.env.SFTP_USER?.trim()),
+    password: Boolean(process.env.SFTP_PASSWORD),
+    port: process.env.SFTP_PORT?.trim() || "22",
+    remoteDirs: process.env.SFTP_REMOTE_DIRS?.trim() || "/mnt/sage,/mnt/import",
+    enableFlag: process.env.ENABLE_EXCEL_SFTP_SYNC?.trim() || null,
+  };
 }
 
 function getSftpConfig() {
