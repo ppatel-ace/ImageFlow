@@ -16,8 +16,8 @@ export type AceSsoUser = {
 
 type AuthState =
   | { status: "loading" }
-  | { status: "authenticated"; user: AceSsoUser }
-  | { status: "unauthenticated"; ssoLoginUrl: string | null };
+  | { status: "authenticated"; user: AceSsoUser; ssoEnabled: boolean }
+  | { status: "unauthenticated"; ssoLoginUrl: string | null; ssoEnabled: boolean };
 
 type AuthContextValue = AuthState & {
   refresh: () => Promise<void>;
@@ -38,18 +38,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const data = (await res.json().catch(() => ({}))) as {
         authenticated?: boolean;
         ssoLoginUrl?: string;
+        ssoEnabled?: boolean;
         user?: AceSsoUser;
       };
+      const ssoEnabled = data.ssoEnabled !== false;
       if (data.authenticated && data.user) {
-        setState({ status: "authenticated", user: data.user });
+        setState({ status: "authenticated", user: data.user, ssoEnabled });
         return;
       }
       setState({
         status: "unauthenticated",
         ssoLoginUrl: data.ssoLoginUrl ?? null,
+        ssoEnabled,
       });
     } catch {
-      setState({ status: "unauthenticated", ssoLoginUrl: null });
+      setState({ status: "unauthenticated", ssoLoginUrl: null, ssoEnabled: true });
     }
   }, []);
 
@@ -62,7 +65,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } catch {
       /* ignore */
     }
-    setState({ status: "unauthenticated", ssoLoginUrl: null });
+    setState({ status: "unauthenticated", ssoLoginUrl: null, ssoEnabled: true });
     await refresh();
   }, [refresh]);
 

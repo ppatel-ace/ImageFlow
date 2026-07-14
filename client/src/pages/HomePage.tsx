@@ -36,7 +36,7 @@ export default function HomePage() {
 
           <div className="flex min-w-0 items-center justify-end gap-2 sm:gap-3">
             <ThemeToggle />
-            {user ? (
+            {user && auth.status === "authenticated" && auth.ssoEnabled ? (
               <div className="flex items-center gap-2 sm:gap-2.5">
                 <div className="hidden items-center gap-2 sm:flex">
                   <span

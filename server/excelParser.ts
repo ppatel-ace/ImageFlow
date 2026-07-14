@@ -49,20 +49,24 @@ export function getLatestExcelFile(): string | null {
     const files = readdirSync(assetsPath);
 
     const excelFiles = files.filter(file =>
-      file.startsWith('OpenOrdersAllQtyOnly_') && file.endsWith('.xlsx')
+      (file.startsWith('OpenOrdersAllQtyOnly_') || file === 'OpenOrdersAllQtyOnly_seed.xlsx') &&
+      file.endsWith('.xlsx')
     );
 
     if (excelFiles.length === 0) {
       return null;
     }
 
-    excelFiles.sort((a, b) => {
-      const timestampA = parseInt(a.match(/\d+/)?.[0] || '0');
-      const timestampB = parseInt(b.match(/\d+/)?.[0] || '0');
+    // Prefer dated / timestamp dumps over the seed file
+    const ranked = [...excelFiles].sort((a, b) => {
+      if (a.includes('seed') && !b.includes('seed')) return 1;
+      if (b.includes('seed') && !a.includes('seed')) return -1;
+      const timestampA = parseInt(a.match(/\d{10,}/)?.[0] || a.match(/\d+/)?.[0] || '0', 10);
+      const timestampB = parseInt(b.match(/\d{10,}/)?.[0] || b.match(/\d+/)?.[0] || '0', 10);
       return timestampB - timestampA;
     });
 
-    return excelFiles[0];
+    return ranked[0];
   } catch (error: any) {
     const code = error?.code || '';
     const msg = error?.message || String(error);

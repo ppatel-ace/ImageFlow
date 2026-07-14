@@ -4,6 +4,7 @@
  */
 import { createHmac, timingSafeEqual } from "crypto";
 import type { Request, Response, NextFunction, Express } from "express";
+import { isSsoEnabled } from "./env";
 
 export type AceAppSlug = "imageflow";
 
@@ -204,6 +205,17 @@ export function tryAceSsoFromRequest(
 
 export function requireAceSsoApp(app: AceAppSlug) {
   return (req: AceAuthRequest, res: Response, next: NextFunction): void => {
+    if (!isSsoEnabled()) {
+      req.aceSsoUser = {
+        id: "local-dev",
+        sub: "local-dev",
+        email: "local@aceelectronics.com",
+        name: "Local User",
+        apps: [app],
+      };
+      return next();
+    }
+
     const payload = tryAceSsoFromRequest(req, res);
     if (!payload) {
       const loginUrl = buildSsoLoginUrl(req);
@@ -260,11 +272,27 @@ export function registerAceSsoRoutes(app: Express, appSlug: AceAppSlug = "imagef
   });
 
   app.get("/api/auth/sso/session", (req: AceAuthRequest, res) => {
+    if (!isSsoEnabled()) {
+      return res.json({
+        authenticated: true,
+        via: "disabled",
+        ssoEnabled: false,
+        user: {
+          id: "local-dev",
+          email: "local@aceelectronics.com",
+          name: "Local User",
+          groups: [],
+          apps: [appSlug],
+        },
+      });
+    }
+
     const payload = tryAceSsoFromRequest(req, res);
     if (payload && hasAppAccess(payload, appSlug)) {
       return res.json({
         authenticated: true,
         via: "sso",
+        ssoEnabled: true,
         user: {
           id: payload.sub,
           email: payload.email,
@@ -278,10 +306,11 @@ export function registerAceSsoRoutes(app: Express, appSlug: AceAppSlug = "imagef
     if (loginUrl) {
       return res.json({
         authenticated: false,
+        ssoEnabled: true,
         ssoLoginUrl: loginUrl,
       });
     }
-    res.json({ authenticated: false });
+    res.json({ authenticated: false, ssoEnabled: true });
   });
 
   app.post("/api/auth/sso/logout", (_req, res) => {

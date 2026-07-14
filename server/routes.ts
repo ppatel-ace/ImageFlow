@@ -1,7 +1,7 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import multer from "multer";
-import { checkForNewExcelFile, isExcelSftpSyncAvailable } from "./excelSync";
+import { checkForNewExcelFile, isExcelSftpSyncAvailable, isExcelSyncAvailable } from "./excelSync";
 import { uploadFileToSharePoint } from "./sharepoint";
 import {
   getAllWorkOrders,
@@ -13,6 +13,15 @@ import { requireAceSsoApp } from "./aceSso";
 
 const upload = multer({ storage: multer.memoryStorage() });
 const requireImageflow = requireAceSsoApp("imageflow");
+
+/** If WO cache is empty but sync is configured, pull Excel once before answering. */
+async function ensureWorkOrderDataLoaded(): Promise<void> {
+  if (getAllWorkOrders().length > 0 || !isExcelSyncAvailable()) return;
+  const syncResult = await checkForNewExcelFile();
+  if (syncResult.success) {
+    await reloadExcelData();
+  }
+}
 
 async function handleImageUpload(req: any, res: any) {
   try {
@@ -81,21 +90,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
     handleImageUpload,
   );
 
-  app.get("/api/work-orders", requireImageflow, (req, res) => {
+  app.get("/api/work-orders", requireImageflow, async (_req, res) => {
     try {
-      const workOrders = getAllWorkOrders();
-      res.json(workOrders);
+      await ensureWorkOrderDataLoaded();
+      res.json(getAllWorkOrders());
     } catch (error: any) {
       console.error("Error fetching work orders:", error);
       res.status(500).json({ error: "Failed to fetch work orders" });
     }
   });
 
-  app.get("/api/part-numbers/:workOrder", requireImageflow, (req, res) => {
+  app.get("/api/part-numbers/:workOrder", requireImageflow, async (req, res) => {
     try {
+      await ensureWorkOrderDataLoaded();
       const { workOrder } = req.params;
-      const partNumbers = getPartNumbersByWorkOrder(workOrder);
-      res.json(partNumbers);
+      res.json(getPartNumbersByWorkOrder(workOrder));
     } catch (error: any) {
       console.error("Error fetching part numbers:", error);
       res.status(500).json({ error: "Failed to fetch part numbers" });

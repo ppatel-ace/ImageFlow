@@ -1,3 +1,29 @@
+// server/env.ts
+import { readFileSync, existsSync } from "fs";
+import { resolve } from "path";
+function loadEnvFile(fileName = ".env") {
+  const filePath = resolve(process.cwd(), fileName);
+  if (!existsSync(filePath)) return;
+  const text = readFileSync(filePath, "utf8");
+  for (const rawLine of text.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("#")) continue;
+    const eq = line.indexOf("=");
+    if (eq <= 0) continue;
+    const key = line.slice(0, eq).trim();
+    if (!key || process.env[key] !== void 0) continue;
+    let value = line.slice(eq + 1).trim();
+    if (value.startsWith('"') && value.endsWith('"') || value.startsWith("'") && value.endsWith("'")) {
+      value = value.slice(1, -1);
+    }
+    process.env[key] = value;
+  }
+}
+function isSsoEnabled() {
+  const flag = process.env.ENABLE_SSO?.trim().toLowerCase();
+  return flag === "1" || flag === "true" || flag === "on" || flag === "yes";
+}
+
 // server/index.ts
 import express from "express";
 
@@ -127,7 +153,7 @@ async function checkForNewExcelFile() {
 
 // server/sftpImport.ts
 import SftpClient from "ssh2-sftp-client";
-import { writeFileSync as writeFileSync2, mkdirSync, existsSync } from "fs";
+import { writeFileSync as writeFileSync2, mkdirSync, existsSync as existsSync2 } from "fs";
 import { join as join2, dirname as dirname2 } from "path";
 import { fileURLToPath as fileURLToPath2 } from "url";
 var DEFAULT_REMOTE_DIRS = ["/mnt/sage", "/mnt/import"];
@@ -261,7 +287,7 @@ async function checkForNewExcelFileViaSftp() {
     const __filename2 = fileURLToPath2(import.meta.url);
     const __dirname2 = dirname2(__filename2);
     const assetsDir = join2(__dirname2, "..", "attached_assets");
-    if (!existsSync(assetsDir)) {
+    if (!existsSync2(assetsDir)) {
       mkdirSync(assetsDir, { recursive: true });
     }
     const newFileName = `OpenOrdersAllQtyOnly_${Date.now()}.xlsx`;
@@ -491,17 +517,19 @@ function getLatestExcelFile() {
     const assetsPath = join3(__dirname, "..", "attached_assets");
     const files = readdirSync(assetsPath);
     const excelFiles = files.filter(
-      (file) => file.startsWith("OpenOrdersAllQtyOnly_") && file.endsWith(".xlsx")
+      (file) => (file.startsWith("OpenOrdersAllQtyOnly_") || file === "OpenOrdersAllQtyOnly_seed.xlsx") && file.endsWith(".xlsx")
     );
     if (excelFiles.length === 0) {
       return null;
     }
-    excelFiles.sort((a, b) => {
-      const timestampA = parseInt(a.match(/\d+/)?.[0] || "0");
-      const timestampB = parseInt(b.match(/\d+/)?.[0] || "0");
+    const ranked = [...excelFiles].sort((a, b) => {
+      if (a.includes("seed") && !b.includes("seed")) return 1;
+      if (b.includes("seed") && !a.includes("seed")) return -1;
+      const timestampA = parseInt(a.match(/\d{10,}/)?.[0] || a.match(/\d+/)?.[0] || "0", 10);
+      const timestampB = parseInt(b.match(/\d{10,}/)?.[0] || b.match(/\d+/)?.[0] || "0", 10);
       return timestampB - timestampA;
     });
-    return excelFiles[0];
+    return ranked[0];
   } catch (error) {
     const code = error?.code || "";
     const msg = error?.message || String(error);
@@ -715,6 +743,16 @@ function tryAceSsoFromRequest(req, res) {
 }
 function requireAceSsoApp(app2) {
   return (req, res, next) => {
+    if (!isSsoEnabled()) {
+      req.aceSsoUser = {
+        id: "local-dev",
+        sub: "local-dev",
+        email: "local@aceelectronics.com",
+        name: "Local User",
+        apps: [app2]
+      };
+      return next();
+    }
     const payload = tryAceSsoFromRequest(req, res);
     if (!payload) {
       const loginUrl = buildSsoLoginUrl(req);
@@ -760,11 +798,26 @@ function registerAceSsoRoutes(app2, appSlug = "imageflow") {
     res.redirect(safeNext);
   });
   app2.get("/api/auth/sso/session", (req, res) => {
+    if (!isSsoEnabled()) {
+      return res.json({
+        authenticated: true,
+        via: "disabled",
+        ssoEnabled: false,
+        user: {
+          id: "local-dev",
+          email: "local@aceelectronics.com",
+          name: "Local User",
+          groups: [],
+          apps: [appSlug]
+        }
+      });
+    }
     const payload = tryAceSsoFromRequest(req, res);
     if (payload && hasAppAccess(payload, appSlug)) {
       return res.json({
         authenticated: true,
         via: "sso",
+        ssoEnabled: true,
         user: {
           id: payload.sub,
           email: payload.email,
@@ -778,10 +831,11 @@ function registerAceSsoRoutes(app2, appSlug = "imageflow") {
     if (loginUrl) {
       return res.json({
         authenticated: false,
+        ssoEnabled: true,
         ssoLoginUrl: loginUrl
       });
     }
-    res.json({ authenticated: false });
+    res.json({ authenticated: false, ssoEnabled: true });
   });
   app2.post("/api/auth/sso/logout", (_req, res) => {
     clearAceSsoCookie(res);
@@ -798,6 +852,13 @@ function registerAceSsoRoutes(app2, appSlug = "imageflow") {
 // server/routes.ts
 var upload = multer({ storage: multer.memoryStorage() });
 var requireImageflow = requireAceSsoApp("imageflow");
+async function ensureWorkOrderDataLoaded() {
+  if (getAllWorkOrders().length > 0 || !isExcelSyncAvailable()) return;
+  const syncResult = await checkForNewExcelFile2();
+  if (syncResult.success) {
+    await reloadExcelData();
+  }
+}
 async function handleImageUpload(req, res) {
   try {
     if (!req.file) {
@@ -847,20 +908,20 @@ async function registerRoutes(app2) {
     upload.single("imageFile"),
     handleImageUpload
   );
-  app2.get("/api/work-orders", requireImageflow, (req, res) => {
+  app2.get("/api/work-orders", requireImageflow, async (_req, res) => {
     try {
-      const workOrders = getAllWorkOrders();
-      res.json(workOrders);
+      await ensureWorkOrderDataLoaded();
+      res.json(getAllWorkOrders());
     } catch (error) {
       console.error("Error fetching work orders:", error);
       res.status(500).json({ error: "Failed to fetch work orders" });
     }
   });
-  app2.get("/api/part-numbers/:workOrder", requireImageflow, (req, res) => {
+  app2.get("/api/part-numbers/:workOrder", requireImageflow, async (req, res) => {
     try {
+      await ensureWorkOrderDataLoaded();
       const { workOrder } = req.params;
-      const partNumbers = getPartNumbersByWorkOrder(workOrder);
-      res.json(partNumbers);
+      res.json(getPartNumbersByWorkOrder(workOrder));
     } catch (error) {
       console.error("Error fetching part numbers:", error);
       res.status(500).json({ error: "Failed to fetch part numbers" });
@@ -973,6 +1034,7 @@ function initializeScheduler() {
 import path from "path";
 import fs from "fs";
 import { fileURLToPath as fileURLToPath4 } from "url";
+loadEnvFile();
 function log(message, source = "express") {
   const formattedTime = (/* @__PURE__ */ new Date()).toLocaleTimeString("en-US", {
     hour: "numeric",
@@ -1021,7 +1083,11 @@ app.use((req, res, next) => {
     res.status(status).json({ message });
     throw err;
   });
-  app.use(requireAceSsoSpa("imageflow"));
+  if (isSsoEnabled()) {
+    app.use(requireAceSsoSpa("imageflow"));
+  } else {
+    console.warn("[SSO] Disabled (set ENABLE_SSO=true to require ACE login)");
+  }
   if (process.env.NODE_ENV === "development") {
     const viteModule = "./vite";
     const { setupVite } = await import(viteModule);

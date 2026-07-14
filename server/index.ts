@@ -1,3 +1,6 @@
+import { loadEnvFile, isSsoEnabled } from "./env";
+loadEnvFile();
+
 import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { initializeScheduler } from "./scheduler";
@@ -68,8 +71,12 @@ app.use((req, res, next) => {
     throw err;
   });
 
-  // Soft SSO middleware: refresh cookie if present; client shows LoginPage when needed
-  app.use(requireAceSsoSpa("imageflow"));
+  // Soft SSO middleware (no-op when ENABLE_SSO is not true)
+  if (isSsoEnabled()) {
+    app.use(requireAceSsoSpa("imageflow"));
+  } else {
+    console.warn("[SSO] Disabled (set ENABLE_SSO=true to require ACE login)");
+  }
 
   // importantly only setup vite in development and after
   // setting up all the other routes so the catch-all route

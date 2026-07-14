@@ -10,7 +10,7 @@ import { Card } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Command, CommandEmpty, CommandGroup, CommandItem, CommandList } from "@/components/ui/command";
-import { Camera, Upload, FolderOpen, CheckCircle2, Loader2, Image as ImageIcon, Download, Check, RefreshCw } from "lucide-react";
+import { Camera, Upload, FolderOpen, CheckCircle2, Loader2, Image as ImageIcon, Download, Check, RefreshCw, ChevronsUpDown } from "lucide-react";
 import { format } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
 import { useQuery } from "@tanstack/react-query";
@@ -74,10 +74,11 @@ export default function ImageUploadForm() {
     localStorage.removeItem("lastCustomerName");
   }, []);
 
-  // Fetch all work orders
-  const { data: workOrders = [] } = useQuery<string[]>({
+  // Fetch all work orders (refetch after Excel sync / on focus)
+  const { data: workOrders = [], refetch: refetchWorkOrders, isFetching: isFetchingWorkOrders } = useQuery<string[]>({
     queryKey: ['/api/work-orders'],
-    staleTime: Infinity,
+    staleTime: 60_000,
+    refetchOnWindowFocus: true,
   });
 
   const lastDept = localStorage.getItem("lastDept") || "";
@@ -402,19 +403,18 @@ export default function ImageUploadForm() {
       if (result.success) {
         toast({
           title: isAutoCheck ? "Auto-Update Successful!" : "Excel Data Updated!",
-          description: `Updated from Google Drive file: ${result.originalFileName}`,
+          description: `Updated from ${result.source || "remote"}: ${result.originalFileName}`,
         });
-        
-        // Reload the page after a short delay so the toast is visible
+        await refetchWorkOrders();
         setTimeout(() => {
           window.location.reload();
-        }, 2000);
+        }, 1500);
       } else {
         // Only show toast for manual checks, silent for auto-checks with no updates
         if (!isAutoCheck) {
           toast({
             title: "No Updates Found",
-            description: result.message || "No new Excel files found in Google Drive KSAlert folder",
+            description: result.message || "No new Open Orders Excel file found on SFTP",
           });
         }
       }
@@ -644,44 +644,74 @@ export default function ImageUploadForm() {
                     setWorkOrderOpen(true);
                   }}
                   onFocus={() => setWorkOrderOpen(true)}
+                  onClick={() => setWorkOrderOpen(true)}
                   onBlur={() => {
-                    // Close dropdown after a small delay to allow clicking items
                     setTimeout(() => setWorkOrderOpen(false), 200);
                   }}
-                  placeholder="Type or select work order"
-                  className="min-h-12 sm:min-h-14 text-base font-mono"
+                  placeholder={
+                    isFetchingWorkOrders
+                      ? "Loading work orders…"
+                      : workOrders.length > 0
+                        ? `Type or select (${workOrders.length} available)`
+                        : "No work orders loaded — check Excel sync"
+                  }
+                  className="min-h-12 sm:min-h-14 text-base font-mono pr-10"
+                  autoComplete="off"
                 />
-                {workOrderOpen && workOrders.length > 0 && (
+                <button
+                  type="button"
+                  className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-muted-foreground hover:text-foreground"
+                  aria-label="Show work orders"
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    setWorkOrderOpen((open) => !open);
+                  }}
+                >
+                  <ChevronsUpDown className="h-4 w-4" />
+                </button>
+                {workOrderOpen && (
                   <div className="absolute z-50 w-full mt-1 bg-popover border rounded-md shadow-md max-h-60 overflow-auto">
-                    {workOrders
-                      .filter((wo) => wo.toLowerCase().includes(workOrderSearch.toLowerCase()))
-                      .map((wo) => (
-                        <div
-                          key={wo}
-                          className={cn(
-                            "px-3 py-2 cursor-pointer hover-elevate text-sm font-mono flex items-center",
-                            workOrderNumber === wo && "bg-accent"
-                          )}
-                          onMouseDown={(e) => {
-                            e.preventDefault(); // Prevent input blur
-                            setWorkOrderSearch(wo);
-                            form.setValue("workOrderNumber", wo);
-                            setWorkOrderOpen(false);
-                          }}
-                        >
-                          <Check
-                            className={cn(
-                              "mr-2 h-4 w-4",
-                              workOrderNumber === wo ? "opacity-100" : "opacity-0"
-                            )}
-                          />
-                          {wo}
-                        </div>
-                      ))}
-                    {workOrders.filter((wo) => wo.toLowerCase().includes(workOrderSearch.toLowerCase())).length === 0 && (
+                    {workOrders.length === 0 ? (
                       <div className="px-3 py-2 text-sm text-muted-foreground">
-                        No work order found.
+                        {isFetchingWorkOrders
+                          ? "Loading work orders…"
+                          : "No work orders available. Use Check for Updates to sync Excel from SFTP."}
                       </div>
+                    ) : (
+                      <>
+                        {workOrders
+                          .filter((wo) => wo.toLowerCase().includes(workOrderSearch.toLowerCase()))
+                          .map((wo) => (
+                            <div
+                              key={wo}
+                              className={cn(
+                                "px-3 py-2 cursor-pointer hover-elevate text-sm font-mono flex items-center",
+                                workOrderNumber === wo && "bg-accent"
+                              )}
+                              onMouseDown={(e) => {
+                                e.preventDefault();
+                                setWorkOrderSearch(wo);
+                                form.setValue("workOrderNumber", wo);
+                                setWorkOrderOpen(false);
+                              }}
+                            >
+                              <Check
+                                className={cn(
+                                  "mr-2 h-4 w-4 shrink-0",
+                                  workOrderNumber === wo ? "opacity-100" : "opacity-0"
+                                )}
+                              />
+                              {wo}
+                            </div>
+                          ))}
+                        {workOrders.filter((wo) =>
+                          wo.toLowerCase().includes(workOrderSearch.toLowerCase())
+                        ).length === 0 && (
+                          <div className="px-3 py-2 text-sm text-muted-foreground">
+                            No work order matches “{workOrderSearch}”.
+                          </div>
+                        )}
+                      </>
                     )}
                   </div>
                 )}
@@ -706,49 +736,88 @@ export default function ImageUploadForm() {
                     form.setValue("partNumber", value);
                     setPartNumberOpen(true);
                   }}
-                  onFocus={() => setPartNumberOpen(true)}
+                  onFocus={() => workOrderNumber && setPartNumberOpen(true)}
+                  onClick={() => workOrderNumber && setPartNumberOpen(true)}
                   onBlur={() => {
-                    // Close dropdown after a small delay to allow clicking items
                     setTimeout(() => setPartNumberOpen(false), 200);
                   }}
-                  placeholder={workOrderNumber ? (partNumberOptions.length > 0 ? "Type or select part number" : "No parts for this work order") : "Select work order first"}
-                  className="min-h-12 sm:min-h-14 text-base font-mono"
-                  disabled={!workOrderNumber || partNumberOptions.length === 0}
+                  placeholder={
+                    !workOrderNumber
+                      ? "Select work order first"
+                      : partNumberOptions.length > 0
+                        ? `Type or select (${partNumberOptions.length} available)`
+                        : "No parts for this work order"
+                  }
+                  className="min-h-12 sm:min-h-14 text-base font-mono pr-10"
+                  disabled={!workOrderNumber}
+                  autoComplete="off"
                 />
-                {partNumberOpen && partNumberOptions.length > 0 && (
+                <button
+                  type="button"
+                  className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-muted-foreground hover:text-foreground disabled:opacity-40"
+                  aria-label="Show part numbers"
+                  disabled={!workOrderNumber}
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    if (workOrderNumber) setPartNumberOpen((open) => !open);
+                  }}
+                >
+                  <ChevronsUpDown className="h-4 w-4" />
+                </button>
+                {partNumberOpen && workOrderNumber && (
                   <div className="absolute z-50 w-full mt-1 bg-popover border rounded-md shadow-md max-h-60 overflow-auto">
-                    {partNumberOptions
-                      .map((part, index) => ({ part, index }))
-                      .filter(({ part }) => part.partNumber.toLowerCase().includes(partNumberSearch.toLowerCase()))
-                      .map(({ part, index }) => (
-                        <div
-                          key={`${part.partNumber}-${index}`}
-                          className={cn(
-                            "px-3 py-2 cursor-pointer hover-elevate text-sm font-mono flex items-center",
-                            partNumber === part.partNumber && 
-                            rev === part.rev && 
-                            customerName === part.customerName && "bg-accent"
-                          )}
-                          onMouseDown={(e) => {
-                            e.preventDefault(); // Prevent input blur
-                            handlePartNumberSelect(index);
-                          }}
-                        >
-                          <Check
-                            className={cn(
-                              "mr-2 h-4 w-4",
-                              partNumber === part.partNumber && 
-                              rev === part.rev && 
-                              customerName === part.customerName ? "opacity-100" : "opacity-0"
-                            )}
-                          />
-                          {part.partNumber}
-                        </div>
-                      ))}
-                    {partNumberOptions.filter((part) => part.partNumber.toLowerCase().includes(partNumberSearch.toLowerCase())).length === 0 && (
+                    {partNumberOptions.length === 0 ? (
                       <div className="px-3 py-2 text-sm text-muted-foreground">
-                        No part number found.
+                        No part numbers found for this work order.
                       </div>
+                    ) : (
+                      <>
+                        {partNumberOptions
+                          .map((part, index) => ({ part, index }))
+                          .filter(({ part }) =>
+                            part.partNumber.toLowerCase().includes(partNumberSearch.toLowerCase())
+                          )
+                          .map(({ part, index }) => (
+                            <div
+                              key={`${part.partNumber}-${index}`}
+                              className={cn(
+                                "px-3 py-2 cursor-pointer hover-elevate text-sm font-mono flex items-center",
+                                partNumber === part.partNumber &&
+                                  rev === part.rev &&
+                                  customerName === part.customerName &&
+                                  "bg-accent"
+                              )}
+                              onMouseDown={(e) => {
+                                e.preventDefault();
+                                handlePartNumberSelect(index);
+                              }}
+                            >
+                              <Check
+                                className={cn(
+                                  "mr-2 h-4 w-4 shrink-0",
+                                  partNumber === part.partNumber &&
+                                    rev === part.rev &&
+                                    customerName === part.customerName
+                                    ? "opacity-100"
+                                    : "opacity-0"
+                                )}
+                              />
+                              <span className="truncate">
+                                {part.partNumber}
+                                {part.rev ? (
+                                  <span className="text-muted-foreground"> · Rev {part.rev}</span>
+                                ) : null}
+                              </span>
+                            </div>
+                          ))}
+                        {partNumberOptions.filter((part) =>
+                          part.partNumber.toLowerCase().includes(partNumberSearch.toLowerCase())
+                        ).length === 0 && (
+                          <div className="px-3 py-2 text-sm text-muted-foreground">
+                            No part number matches “{partNumberSearch}”.
+                          </div>
+                        )}
+                      </>
                     )}
                   </div>
                 )}

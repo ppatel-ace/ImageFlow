@@ -11,22 +11,19 @@ services:
     environment:
       NODE_ENV: production
       PORT: "5000"
-      SSO_JWT_SECRET: ${SSO_JWT_SECRET}
       SSO_LOGIN_URL: ${SSO_LOGIN_URL:-https://sso.aceelectronics.com}
       APP_URL: ${APP_URL:-https://image.aceelectronics.com}
       APP_DOMAIN: ${APP_DOMAIN:-aceelectronics.com}
-      AZURE_TENANT_ID: ${AZURE_TENANT_ID:-}
-      AZURE_CLIENT_ID: ${AZURE_CLIENT_ID:-}
-      AZURE_CLIENT_SECRET: ${AZURE_CLIENT_SECRET:-}
       SHAREPOINT_SITE_HOSTNAME: ${SHAREPOINT_SITE_HOSTNAME:-aceelectronics.sharepoint.us}
       SHAREPOINT_SITE_PATH: ${SHAREPOINT_SITE_PATH:-/sites/jobtravelerphotos}
       SHAREPOINT_DRIVE_ID: ${SHAREPOINT_DRIVE_ID:-}
-      SFTP_HOST: ${SFTP_HOST:-}
+      ENABLE_SSO: ${ENABLE_SSO:-false}
+      SFTP_HOST: ${SFTP_HOST:-192.2.150.2}
       SFTP_PORT: ${SFTP_PORT:-22}
-      SFTP_USER: ${SFTP_USER:-}
-      SFTP_PASSWORD: ${SFTP_PASSWORD:-}
+      SFTP_USER: ${SFTP_USER:-ppadm}
       SFTP_REMOTE_DIRS: ${SFTP_REMOTE_DIRS:-/mnt/sage,/mnt/import}
-      ENABLE_EXCEL_SFTP_SYNC: ${ENABLE_EXCEL_SFTP_SYNC:-}
+      # Secrets (SSO_JWT_SECRET, SFTP_PASSWORD, AZURE_*) come from env_file below —
+      # do not interpolate them here (Compose treats $$ specially).
     env_file:
       - path: .env
         required: false
