@@ -6,6 +6,7 @@ import { registerRoutes } from "./routes";
 import { initializeScheduler } from "./scheduler";
 import { registerAceSsoRoutes, requireAceSsoSpa } from "./aceSso";
 import { getSftpEnvStatus } from "./sftpImport";
+import { getSharePointEnvStatus } from "./sharepoint";
 import path from "path";
 import fs from "fs";
 import { fileURLToPath } from "url";
@@ -26,6 +27,7 @@ app.use(express.urlencoded({ extended: false }));
 
 app.get("/health", (_req, res) => {
   const sftp = getSftpEnvStatus();
+  const sp = getSharePointEnvStatus();
   res.json({
     ok: true,
     service: "imageflow",
@@ -42,6 +44,7 @@ app.get("/health", (_req, res) => {
       remoteDirs: sftp.remoteDirs,
       enableFlag: sftp.enableFlag,
     },
+    sharepoint: sp,
   });
 });
 

@@ -263,6 +263,8 @@ async function checkForNewExcelFile() {
 
 // server/sharepoint.ts
 var tokenCache = null;
+var cachedSiteId = null;
+var cachedDriveId = null;
 var GRAPH_BASE = "https://graph.microsoft.us/v1.0";
 var TOKEN_URL_BASE = "https://login.microsoftonline.us";
 function sanitizePathSegment(value) {
@@ -272,6 +274,10 @@ function requireEnv(name) {
   const v = process.env[name]?.trim();
   if (!v) throw new Error(`Missing required env var: ${name}`);
   return v;
+}
+function sitesPermissionHint(status, body) {
+  if (status !== 403 && status !== 401) return "";
+  return ` Azure app lacks SharePoint access. Fix (GCC High admin): (1) App registration \u2192 API permissions \u2192 Microsoft Graph application Sites.Selected (or Sites.ReadWrite.All) + admin consent. (2) Grant that app Write on the site (Grant-PnPAzureADAppSitePermission / Graph site permissions). (3) Prefer setting SHAREPOINT_SITE_ID so the app skips site hostname lookup (Sites.Selected often returns 403 on /sites/{host}:{path}). Graph detail: ${body.slice(0, 180)}`;
 }
 async function getAccessToken() {
   if (tokenCache && tokenCache.expiresAt > Date.now() + 6e4) {
@@ -316,6 +322,19 @@ async function graphFetch(path2, init = {}) {
   return fetch(url, { ...init, headers });
 }
 async function resolveSiteId() {
+  if (cachedSiteId) return cachedSiteId;
+  const configured = process.env.SHAREPOINT_SITE_ID?.trim();
+  if (configured) {
+    const res2 = await graphFetch(`/sites/${configured}`);
+    if (!res2.ok) {
+      const text = await res2.text().catch(() => "");
+      throw new Error(
+        `SHAREPOINT_SITE_ID is set but not accessible (${res2.status}).` + sitesPermissionHint(res2.status, text)
+      );
+    }
+    cachedSiteId = configured;
+    return cachedSiteId;
+  }
   const hostname = process.env.SHAREPOINT_SITE_HOSTNAME?.trim() || "aceelectronics.sharepoint.us";
   const sitePath = process.env.SHAREPOINT_SITE_PATH?.trim() || "/sites/jobtravelerphotos";
   const normalizedPath = sitePath.startsWith("/") ? sitePath : `/${sitePath}`;
@@ -324,23 +343,36 @@ async function resolveSiteId() {
   );
   if (!res.ok) {
     const text = await res.text().catch(() => "");
-    throw new Error(`Failed to resolve SharePoint site (${res.status}): ${text.slice(0, 300)}`);
+    throw new Error(
+      `Failed to resolve SharePoint site (${res.status}).` + sitesPermissionHint(res.status, text) + (statusIsAccessDenied(res.status) ? ` Set SHAREPOINT_SITE_ID to the full Graph site id for ${hostname}${normalizedPath}.` : ` Raw: ${text.slice(0, 200)}`)
+    );
   }
   const site = await res.json();
   if (!site.id) throw new Error("SharePoint site response missing id");
-  return site.id;
+  cachedSiteId = site.id;
+  return cachedSiteId;
+}
+function statusIsAccessDenied(status) {
+  return status === 401 || status === 403;
 }
 async function resolveDriveId(siteId) {
+  if (cachedDriveId) return cachedDriveId;
   const configured = process.env.SHAREPOINT_DRIVE_ID?.trim();
-  if (configured) return configured;
+  if (configured) {
+    cachedDriveId = configured;
+    return cachedDriveId;
+  }
   const res = await graphFetch(`/sites/${siteId}/drive`);
   if (!res.ok) {
     const text = await res.text().catch(() => "");
-    throw new Error(`Failed to resolve default drive (${res.status}): ${text.slice(0, 300)}`);
+    throw new Error(
+      `Failed to resolve default drive (${res.status}).` + sitesPermissionHint(res.status, text)
+    );
   }
   const drive = await res.json();
   if (!drive.id) throw new Error("SharePoint drive response missing id");
-  return drive.id;
+  cachedDriveId = drive.id;
+  return cachedDriveId;
 }
 function driveItemPath(segments) {
   return segments.map(encodeURIComponent).join("/");
@@ -356,7 +388,7 @@ async function ensureFolderPath(driveId, folderPath) {
     if (probe.status !== 404) {
       const text = await probe.text().catch(() => "");
       throw new Error(
-        `Failed to check folder ${built.join("/")} (${probe.status}): ${text.slice(0, 200)}`
+        `Failed to check folder ${built.join("/")} (${probe.status}): ${text.slice(0, 200)}` + sitesPermissionHint(probe.status, text)
       );
     }
     const createUrl = parentSegments.length === 0 ? `/drives/${driveId}/root/children` : `/drives/${driveId}/root:/${driveItemPath(parentSegments)}:/children`;
@@ -371,7 +403,7 @@ async function ensureFolderPath(driveId, folderPath) {
     if (!createRes.ok && createRes.status !== 409) {
       const text = await createRes.text().catch(() => "");
       throw new Error(
-        `Failed to create folder ${part} (${createRes.status}): ${text.slice(0, 200)}`
+        `Failed to create folder ${part} (${createRes.status}): ${text.slice(0, 200)}` + sitesPermissionHint(createRes.status, text)
       );
     }
   }
@@ -396,13 +428,25 @@ async function uploadFileToSharePoint(customerName, dept, workOrderNumber, fileN
   });
   if (!uploadRes.ok) {
     const text = await uploadRes.text().catch(() => "");
-    throw new Error(`SharePoint upload failed (${uploadRes.status}): ${text.slice(0, 300)}`);
+    throw new Error(
+      `SharePoint upload failed (${uploadRes.status}): ${text.slice(0, 300)}` + sitesPermissionHint(uploadRes.status, text)
+    );
   }
   const uploaded = await uploadRes.json().catch(() => ({}));
   return {
     success: true,
     path: `${folderPath}/${sanitizedFile}`,
     webUrl: uploaded.webUrl
+  };
+}
+function getSharePointEnvStatus() {
+  return {
+    azureTenantSet: Boolean(process.env.AZURE_TENANT_ID?.trim()),
+    azureClientSet: Boolean(process.env.AZURE_CLIENT_ID?.trim()),
+    azureSecretSet: Boolean(process.env.AZURE_CLIENT_SECRET?.trim()),
+    siteIdSet: Boolean(process.env.SHAREPOINT_SITE_ID?.trim()),
+    siteHostname: process.env.SHAREPOINT_SITE_HOSTNAME?.trim() || "aceelectronics.sharepoint.us",
+    sitePath: process.env.SHAREPOINT_SITE_PATH?.trim() || "/sites/jobtravelerphotos"
   };
 }
 
@@ -971,6 +1015,7 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 app.get("/health", (_req, res) => {
   const sftp = getSftpEnvStatus();
+  const sp = getSharePointEnvStatus();
   res.json({
     ok: true,
     service: "imageflow",
@@ -986,7 +1031,8 @@ app.get("/health", (_req, res) => {
       port: sftp.port,
       remoteDirs: sftp.remoteDirs,
       enableFlag: sftp.enableFlag
-    }
+    },
+    sharepoint: sp
   });
 });
 registerAceSsoRoutes(app, "imageflow");
