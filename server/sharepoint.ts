@@ -1,7 +1,7 @@
 /**
  * SharePoint uploads via Azure AD app client credentials (GCC High).
  * Token: login.microsoftonline.us → Graph: graph.microsoft.us
- * Auth: AZURE_CLIENT_SECRET, or certificate (PEM/key — preferred for Workload ID CA).
+ * Auth: AZURE_CLIENT_SECRET, or certificate (PEM/key or Portainer base64 — preferred for Workload ID CA).
  * Prefer SHAREPOINT_SITE_ID when using Sites.Selected (hostname lookup often 403s).
  * Folder layout: ACE/{Customer}/{Dept}/{WorkOrder}/
  */
@@ -41,21 +41,47 @@ function base64Url(buf: Buffer): string {
     .replace(/=+$/, "");
 }
 
+function decodeBase64Env(name: string): Buffer {
+  const raw = requireEnv(name);
+  try {
+    return Buffer.from(raw, "base64");
+  } catch {
+    throw new Error(`Invalid base64 in ${name}`);
+  }
+}
+
+function hasCertificateConfigured(): boolean {
+  return Boolean(
+    process.env.AZURE_CLIENT_CERT_PEM_BASE64?.trim() ||
+      process.env.AZURE_CLIENT_CERT_PATH?.trim(),
+  );
+}
+
 function loadClientCertificate(): { privateKeyPem: string; x5tS256: string } {
-  const certPath = requireEnv("AZURE_CLIENT_CERT_PATH");
-  const keyPath =
-    process.env.AZURE_CLIENT_CERT_KEY_PATH?.trim() ||
-    certPath.replace(/\.(pem|cer|crt)$/i, ".key");
+  let certRaw: Buffer;
+  let keyPem: string;
 
-  if (!existsSync(certPath)) {
-    throw new Error(`AZURE_CLIENT_CERT_PATH not found: ${certPath}`);
-  }
-  if (!existsSync(keyPath)) {
-    throw new Error(`Private key not found: ${keyPath}`);
+  const pemB64 = process.env.AZURE_CLIENT_CERT_PEM_BASE64?.trim();
+  if (pemB64) {
+    certRaw = decodeBase64Env("AZURE_CLIENT_CERT_PEM_BASE64");
+    keyPem = decodeBase64Env("AZURE_CLIENT_CERT_KEY_BASE64").toString("utf8");
+  } else {
+    const certPath = requireEnv("AZURE_CLIENT_CERT_PATH");
+    const keyPath =
+      process.env.AZURE_CLIENT_CERT_KEY_PATH?.trim() ||
+      certPath.replace(/\.(pem|cer|crt)$/i, ".key");
+
+    if (!existsSync(certPath)) {
+      throw new Error(`AZURE_CLIENT_CERT_PATH not found: ${certPath}`);
+    }
+    if (!existsSync(keyPath)) {
+      throw new Error(`Private key not found: ${keyPath}`);
+    }
+
+    certRaw = readFileSync(certPath);
+    keyPem = readFileSync(keyPath, "utf8");
   }
 
-  const certRaw = readFileSync(certPath);
-  const keyPem = readFileSync(keyPath, "utf8");
   // Accept PEM or DER (.cer)
   const x509 = new X509Certificate(certRaw);
   const x5tS256 = base64Url(createHash("sha256").update(x509.raw).digest());
@@ -97,7 +123,7 @@ function buildClientAssertion(tokenUrl: string, clientId: string): string {
 
 export function getAzureCredentialMode(): "secret" | "certificate" | "none" {
   if (process.env.AZURE_CLIENT_SECRET?.trim()) return "secret";
-  if (process.env.AZURE_CLIENT_CERT_PATH?.trim()) return "certificate";
+  if (hasCertificateConfigured()) return "certificate";
   return "none";
 }
 
@@ -133,12 +159,12 @@ async function getAccessToken(): Promise<string> {
   const secret = process.env.AZURE_CLIENT_SECRET?.trim();
   if (secret) {
     params.set("client_secret", secret);
-  } else if (process.env.AZURE_CLIENT_CERT_PATH?.trim()) {
+  } else if (hasCertificateConfigured()) {
     params.set("client_assertion_type", CLIENT_ASSERTION_TYPE);
     params.set("client_assertion", buildClientAssertion(tokenUrl, clientId));
   } else {
     throw new Error(
-      "Missing Azure credentials: set AZURE_CLIENT_SECRET or AZURE_CLIENT_CERT_PATH (+ key)",
+      "Missing Azure credentials: set AZURE_CLIENT_SECRET, or AZURE_CLIENT_CERT_PEM_BASE64 + AZURE_CLIENT_CERT_KEY_BASE64 (Portainer), or AZURE_CLIENT_CERT_PATH (+ key)",
     );
   }
 
@@ -362,7 +388,7 @@ export function getSharePointEnvStatus(): {
     azureTenantSet: Boolean(process.env.AZURE_TENANT_ID?.trim()),
     azureClientSet: Boolean(process.env.AZURE_CLIENT_ID?.trim()),
     azureSecretSet: Boolean(process.env.AZURE_CLIENT_SECRET?.trim()),
-    azureCertSet: Boolean(process.env.AZURE_CLIENT_CERT_PATH?.trim()),
+    azureCertSet: hasCertificateConfigured(),
     azureCredentialMode: getAzureCredentialMode(),
     siteIdSet: Boolean(process.env.SHAREPOINT_SITE_ID?.trim()),
     siteHostname:

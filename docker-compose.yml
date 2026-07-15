@@ -20,6 +20,9 @@ services:
       AZURE_TENANT_ID: ${AZURE_TENANT_ID:-}
       AZURE_CLIENT_ID: ${AZURE_CLIENT_ID:-}
       AZURE_CLIENT_SECRET: ${AZURE_CLIENT_SECRET:-}
+      # Certificate auth for Portainer (base64 of PEM + key). Leave secret empty when using these.
+      AZURE_CLIENT_CERT_PEM_BASE64: ${AZURE_CLIENT_CERT_PEM_BASE64:-}
+      AZURE_CLIENT_CERT_KEY_BASE64: ${AZURE_CLIENT_CERT_KEY_BASE64:-}
       SHAREPOINT_SITE_HOSTNAME: ${SHAREPOINT_SITE_HOSTNAME:-aceelectronics.sharepoint.us}
       SHAREPOINT_SITE_PATH: ${SHAREPOINT_SITE_PATH:-/sites/jobtravelerphotos}
       SHAREPOINT_SITE_ID: ${SHAREPOINT_SITE_ID:-}
