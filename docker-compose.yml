@@ -17,6 +17,7 @@ services:
       SSO_LOGIN_URL: ${SSO_LOGIN_URL:-https://sso.aceelectronics.com}
       APP_URL: ${APP_URL:-https://image.aceelectronics.com}
       APP_DOMAIN: ${APP_DOMAIN:-aceelectronics.com}
+      DATABASE_URL: ${DATABASE_URL:-}
       AZURE_TENANT_ID: ${AZURE_TENANT_ID:-}
       AZURE_CLIENT_ID: ${AZURE_CLIENT_ID:-}
       AZURE_CLIENT_SECRET: ${AZURE_CLIENT_SECRET:-}

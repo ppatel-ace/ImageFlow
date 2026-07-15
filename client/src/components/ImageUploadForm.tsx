@@ -13,7 +13,7 @@ import { Command, CommandEmpty, CommandGroup, CommandItem, CommandList } from "@
 import { Camera, Upload, FolderOpen, CheckCircle2, Loader2, Image as ImageIcon, Download, Check, RefreshCw, ChevronsUpDown } from "lucide-react";
 import { format } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
 import CustomCamera from "@/components/CustomCamera";
 import { shouldUseCustomCamera } from "@/lib/deviceDetection";
@@ -54,6 +54,7 @@ export default function ImageUploadForm() {
   const [lastManualCheck, setLastManualCheck] = useState<string | null>(null);
   const [showCustomCamera, setShowCustomCamera] = useState(false);
   const { toast } = useToast();
+  const queryClient = useQueryClient();
 
   // Prevent body scroll when camera is open
   useEffect(() => {
@@ -298,6 +299,8 @@ export default function ImageUploadForm() {
         formData.append("dept", dept);
         formData.append("workOrderNumber", workOrderNumber);
         formData.append("imageName", imageName);
+        formData.append("partNumber", partNumber);
+        formData.append("rev", rev || "");
 
         try {
           const response = await fetch("/api/upload/sharepoint", {
@@ -337,6 +340,7 @@ export default function ImageUploadForm() {
           title: "Upload Successful",
           description: `${uploadedCount} of ${capturedImages.length} image(s) uploaded to SharePoint`,
         });
+        queryClient.invalidateQueries({ queryKey: ["upload-history"] });
         setCapturedImages([]);
         setSharePointSuccess(true);
         setTimeout(() => {

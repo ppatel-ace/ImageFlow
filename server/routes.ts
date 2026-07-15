@@ -9,7 +9,9 @@ import {
   reloadExcelData,
   getCurrentFileName,
 } from "./excelParser";
-import { requireAceSsoApp } from "./aceSso";
+import { requireAceSsoApp, type AceAuthRequest } from "./aceSso";
+import { isDatabaseConfigured } from "./db";
+import { listUploadHistory, recordUploadHistory } from "./uploadHistory";
 
 const upload = multer({ storage: multer.memoryStorage() });
 const requireImageflow = requireAceSsoApp("imageflow");
@@ -23,13 +25,20 @@ async function ensureWorkOrderDataLoaded(): Promise<void> {
   }
 }
 
-async function handleImageUpload(req: any, res: any) {
+function folderOnlyPath(fullPath: string): string {
+  const parts = fullPath.split("/").filter(Boolean);
+  if (parts.length <= 1) return fullPath;
+  return parts.slice(0, -1).join("/");
+}
+
+async function handleImageUpload(req: AceAuthRequest, res: any) {
   try {
     if (!req.file) {
       return res.status(400).json({ error: "No file uploaded" });
     }
 
-    const { customerName, dept, workOrderNumber, imageName } = req.body;
+    const { customerName, dept, workOrderNumber, imageName, partNumber, rev } =
+      req.body;
 
     if (!customerName || !dept || !workOrderNumber || !imageName) {
       return res.status(400).json({ error: "Missing required fields" });
@@ -45,6 +54,25 @@ async function handleImageUpload(req: any, res: any) {
       fileName,
       req.file.buffer,
     );
+
+    const user = req.aceSsoUser;
+    try {
+      await recordUploadHistory({
+        workOrderNumber: String(workOrderNumber),
+        partNumber: String(partNumber ?? ""),
+        rev: String(rev ?? ""),
+        customerName: String(customerName),
+        folderPath: folderOnlyPath(result.path),
+        fileName,
+        webUrl: result.webUrl ?? null,
+        dept: String(dept),
+        userId: user?.id || user?.sub || "unknown",
+        userEmail: user?.email || "unknown",
+        userName: user?.name || user?.email || "Unknown User",
+      });
+    } catch (histErr: any) {
+      console.warn("[uploadHistory] failed to record:", histErr?.message || histErr);
+    }
 
     res.json(result);
   } catch (error: any) {
@@ -89,6 +117,41 @@ export async function registerRoutes(app: Express): Promise<Server> {
     upload.single("imageFile"),
     handleImageUpload,
   );
+
+  app.get("/api/upload-history", requireImageflow, async (req: AceAuthRequest, res) => {
+    try {
+      const scope = String(req.query.scope || "mine").toLowerCase();
+      const user = req.aceSsoUser;
+      const userId = user?.id || user?.sub;
+
+      if (scope === "all") {
+        const rows = await listUploadHistory({});
+        return res.json({
+          scope: "all",
+          databaseConfigured: isDatabaseConfigured(),
+          items: rows,
+        });
+      }
+
+      if (!userId) {
+        return res.status(401).json({ error: "Not authenticated" });
+      }
+
+      const rows = await listUploadHistory({ userId });
+      res.json({
+        scope: "mine",
+        databaseConfigured: isDatabaseConfigured(),
+        items: rows,
+      });
+    } catch (error: any) {
+      console.error("Error fetching upload history:", error);
+      res.status(500).json({
+        error: "Failed to fetch upload history",
+        message: error.message || String(error),
+        databaseConfigured: isDatabaseConfigured(),
+      });
+    }
+  });
 
   app.get("/api/work-orders", requireImageflow, async (_req, res) => {
     try {

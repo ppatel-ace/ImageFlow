@@ -1,6 +1,8 @@
 import ImageUploadForm from "@/components/ImageUploadForm";
+import UploadHistoryPanel from "@/components/UploadHistoryPanel";
 import ThemeToggle from "@/components/ThemeToggle";
 import { Button } from "@/components/ui/button";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAuth, userInitials } from "@/lib/auth";
 import { getHubAppsUrl } from "@/lib/hub";
 
@@ -77,7 +79,22 @@ export default function HomePage() {
       </header>
 
       <main className="py-4 sm:py-6 md:py-8">
-        <ImageUploadForm />
+        <Tabs defaultValue="upload" className="mx-auto max-w-7xl px-3 sm:px-4 md:px-6">
+          <TabsList className="mb-4 grid w-full grid-cols-2 sm:inline-flex sm:w-auto">
+            <TabsTrigger value="upload" data-testid="tab-upload">
+              Upload
+            </TabsTrigger>
+            <TabsTrigger value="history" data-testid="tab-history">
+              History
+            </TabsTrigger>
+          </TabsList>
+          <TabsContent value="upload" className="mt-0">
+            <ImageUploadForm />
+          </TabsContent>
+          <TabsContent value="history" className="mt-0">
+            <UploadHistoryPanel />
+          </TabsContent>
+        </Tabs>
       </main>
     </div>
   );

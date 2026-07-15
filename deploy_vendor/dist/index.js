@@ -1,18 +1,24 @@
+var __defProp = Object.defineProperty;
+var __export = (target, all) => {
+  for (var name in all)
+    __defProp(target, name, { get: all[name], enumerable: true });
+};
+
 // server/env.ts
 import { readFileSync, existsSync } from "fs";
 import { resolve } from "path";
 function loadEnvFile(fileName = ".env") {
   const filePath = resolve(process.cwd(), fileName);
   if (!existsSync(filePath)) return;
-  const text = readFileSync(filePath, "utf8");
-  for (const rawLine of text.split(/\r?\n/)) {
+  const text2 = readFileSync(filePath, "utf8");
+  for (const rawLine of text2.split(/\r?\n/)) {
     const line = rawLine.trim();
     if (!line || line.startsWith("#")) continue;
-    const eq = line.indexOf("=");
-    if (eq <= 0) continue;
-    const key = line.slice(0, eq).trim();
+    const eq2 = line.indexOf("=");
+    if (eq2 <= 0) continue;
+    const key = line.slice(0, eq2).trim();
     if (!key || process.env[key] !== void 0) continue;
-    let value = line.slice(eq + 1).trim();
+    let value = line.slice(eq2 + 1).trim();
     if (value.startsWith('"') && value.endsWith('"') || value.startsWith("'") && value.endsWith("'")) {
       value = value.slice(1, -1);
     }
@@ -399,8 +405,8 @@ async function getAccessToken() {
     body: params
   });
   if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`Azure token request failed (${res.status}): ${text.slice(0, 300)}`);
+    const text2 = await res.text().catch(() => "");
+    throw new Error(`Azure token request failed (${res.status}): ${text2.slice(0, 300)}`);
   }
   const data = await res.json();
   if (!data.access_token) {
@@ -428,9 +434,9 @@ async function resolveSiteId() {
   if (configured) {
     const res2 = await graphFetch(`/sites/${configured}`);
     if (!res2.ok) {
-      const text = await res2.text().catch(() => "");
+      const text2 = await res2.text().catch(() => "");
       throw new Error(
-        `SHAREPOINT_SITE_ID is set but not accessible (${res2.status}).` + sitesPermissionHint(res2.status, text)
+        `SHAREPOINT_SITE_ID is set but not accessible (${res2.status}).` + sitesPermissionHint(res2.status, text2)
       );
     }
     cachedSiteId = configured;
@@ -443,9 +449,9 @@ async function resolveSiteId() {
     `/sites/${encodeURIComponent(hostname)}:${normalizedPath}`
   );
   if (!res.ok) {
-    const text = await res.text().catch(() => "");
+    const text2 = await res.text().catch(() => "");
     throw new Error(
-      `Failed to resolve SharePoint site (${res.status}).` + sitesPermissionHint(res.status, text) + (statusIsAccessDenied(res.status) ? ` Set SHAREPOINT_SITE_ID to the full Graph site id for ${hostname}${normalizedPath}.` : ` Raw: ${text.slice(0, 200)}`)
+      `Failed to resolve SharePoint site (${res.status}).` + sitesPermissionHint(res.status, text2) + (statusIsAccessDenied(res.status) ? ` Set SHAREPOINT_SITE_ID to the full Graph site id for ${hostname}${normalizedPath}.` : ` Raw: ${text2.slice(0, 200)}`)
     );
   }
   const site = await res.json();
@@ -465,9 +471,9 @@ async function resolveDriveId(siteId) {
   }
   const res = await graphFetch(`/sites/${siteId}/drive`);
   if (!res.ok) {
-    const text = await res.text().catch(() => "");
+    const text2 = await res.text().catch(() => "");
     throw new Error(
-      `Failed to resolve default drive (${res.status}).` + sitesPermissionHint(res.status, text)
+      `Failed to resolve default drive (${res.status}).` + sitesPermissionHint(res.status, text2)
     );
   }
   const drive = await res.json();
@@ -487,9 +493,9 @@ async function ensureFolderPath(driveId, folderPath) {
     const probe = await graphFetch(`/drives/${driveId}/root:/${driveItemPath(built)}`);
     if (probe.ok) continue;
     if (probe.status !== 404) {
-      const text = await probe.text().catch(() => "");
+      const text2 = await probe.text().catch(() => "");
       throw new Error(
-        `Failed to check folder ${built.join("/")} (${probe.status}): ${text.slice(0, 200)}` + sitesPermissionHint(probe.status, text)
+        `Failed to check folder ${built.join("/")} (${probe.status}): ${text2.slice(0, 200)}` + sitesPermissionHint(probe.status, text2)
       );
     }
     const createUrl = parentSegments.length === 0 ? `/drives/${driveId}/root/children` : `/drives/${driveId}/root:/${driveItemPath(parentSegments)}:/children`;
@@ -502,9 +508,9 @@ async function ensureFolderPath(driveId, folderPath) {
       })
     });
     if (!createRes.ok && createRes.status !== 409) {
-      const text = await createRes.text().catch(() => "");
+      const text2 = await createRes.text().catch(() => "");
       throw new Error(
-        `Failed to create folder ${part} (${createRes.status}): ${text.slice(0, 200)}` + sitesPermissionHint(createRes.status, text)
+        `Failed to create folder ${part} (${createRes.status}): ${text2.slice(0, 200)}` + sitesPermissionHint(createRes.status, text2)
       );
     }
   }
@@ -528,9 +534,9 @@ async function uploadFileToSharePoint(customerName, dept, workOrderNumber, fileN
     body: fileBuffer
   });
   if (!uploadRes.ok) {
-    const text = await uploadRes.text().catch(() => "");
+    const text2 = await uploadRes.text().catch(() => "");
     throw new Error(
-      `SharePoint upload failed (${uploadRes.status}): ${text.slice(0, 300)}` + sitesPermissionHint(uploadRes.status, text)
+      `SharePoint upload failed (${uploadRes.status}): ${text2.slice(0, 300)}` + sitesPermissionHint(uploadRes.status, text2)
     );
   }
   const uploaded = await uploadRes.json().catch(() => ({}));
@@ -540,9 +546,9 @@ async function uploadFileToSharePoint(customerName, dept, workOrderNumber, fileN
       body: JSON.stringify({ comment: "ImageFlow upload" })
     });
     if (!checkinRes.ok) {
-      const text = await checkinRes.text().catch(() => "");
+      const text2 = await checkinRes.text().catch(() => "");
       console.warn(
-        `SharePoint check-in failed for ${sanitizedFile} (${checkinRes.status}): ${text.slice(0, 200)}`
+        `SharePoint check-in failed for ${sanitizedFile} (${checkinRes.status}): ${text2.slice(0, 200)}`
       );
     }
   }
@@ -932,6 +938,154 @@ function registerAceSsoRoutes(app2, appSlug = "imageflow") {
   });
 }
 
+// server/db.ts
+import { drizzle } from "drizzle-orm/node-postgres";
+import pg from "pg";
+
+// shared/schema.ts
+var schema_exports = {};
+__export(schema_exports, {
+  insertUserSchema: () => insertUserSchema,
+  uploadHistory: () => uploadHistory,
+  users: () => users
+});
+import { sql } from "drizzle-orm";
+import { pgTable, text, varchar, timestamp } from "drizzle-orm/pg-core";
+import { createInsertSchema } from "drizzle-zod";
+var users = pgTable("users", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  username: text("username").notNull().unique(),
+  password: text("password").notNull()
+});
+var insertUserSchema = createInsertSchema(users).pick({
+  username: true,
+  password: true
+});
+var uploadHistory = pgTable("upload_history", {
+  id: text("id").primaryKey(),
+  uploadedAt: timestamp("uploaded_at", { withTimezone: true }).notNull().defaultNow(),
+  workOrderNumber: text("work_order_number").notNull(),
+  partNumber: text("part_number").notNull().default(""),
+  rev: text("rev").notNull().default(""),
+  customerName: text("customer_name").notNull(),
+  folderPath: text("folder_path").notNull(),
+  fileName: text("file_name"),
+  webUrl: text("web_url"),
+  dept: text("dept"),
+  userId: text("user_id").notNull(),
+  userEmail: text("user_email").notNull(),
+  userName: text("user_name").notNull()
+});
+
+// server/db.ts
+var { Pool } = pg;
+var pool = null;
+var db = null;
+var ensured = false;
+function isDatabaseConfigured() {
+  return Boolean(process.env.DATABASE_URL?.trim());
+}
+function getDb() {
+  if (!isDatabaseConfigured()) {
+    throw new Error("DATABASE_URL is not set \u2014 upload history requires Postgres");
+  }
+  if (!pool) {
+    pool = new Pool({
+      connectionString: process.env.DATABASE_URL.trim(),
+      ssl: process.env.DATABASE_SSL === "true" ? { rejectUnauthorized: false } : void 0,
+      max: 5
+    });
+    db = drizzle(pool, { schema: schema_exports });
+  }
+  return db;
+}
+function getPool() {
+  getDb();
+  return pool;
+}
+async function ensureUploadHistoryTable() {
+  if (!isDatabaseConfigured() || ensured) return;
+  const client = await getPool().connect();
+  try {
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS upload_history (
+        id text PRIMARY KEY,
+        uploaded_at timestamptz NOT NULL DEFAULT now(),
+        work_order_number text NOT NULL,
+        part_number text NOT NULL DEFAULT '',
+        rev text NOT NULL DEFAULT '',
+        customer_name text NOT NULL,
+        folder_path text NOT NULL,
+        file_name text,
+        web_url text,
+        dept text,
+        user_id text NOT NULL,
+        user_email text NOT NULL,
+        user_name text NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS upload_history_uploaded_at_idx ON upload_history (uploaded_at DESC);
+      CREATE INDEX IF NOT EXISTS upload_history_user_id_idx ON upload_history (user_id);
+    `);
+    ensured = true;
+  } finally {
+    client.release();
+  }
+}
+
+// server/uploadHistory.ts
+import { randomUUID as randomUUID2 } from "crypto";
+import { desc, eq } from "drizzle-orm";
+function toDto(row) {
+  return {
+    id: row.id,
+    uploadedAt: row.uploadedAt.toISOString(),
+    workOrderNumber: row.workOrderNumber,
+    partNumber: row.partNumber,
+    rev: row.rev,
+    customerName: row.customerName,
+    folderPath: row.folderPath,
+    fileName: row.fileName ?? null,
+    webUrl: row.webUrl ?? null,
+    dept: row.dept ?? null,
+    userId: row.userId,
+    userEmail: row.userEmail,
+    userName: row.userName
+  };
+}
+async function recordUploadHistory(entry) {
+  if (!isDatabaseConfigured()) {
+    console.warn("[uploadHistory] DATABASE_URL not set \u2014 skipping history write");
+    return null;
+  }
+  await ensureUploadHistoryTable();
+  const db2 = getDb();
+  const [row] = await db2.insert(uploadHistory).values({
+    id: randomUUID2(),
+    workOrderNumber: entry.workOrderNumber,
+    partNumber: entry.partNumber,
+    rev: entry.rev,
+    customerName: entry.customerName,
+    folderPath: entry.folderPath,
+    fileName: entry.fileName ?? null,
+    webUrl: entry.webUrl ?? null,
+    dept: entry.dept ?? null,
+    userId: entry.userId,
+    userEmail: entry.userEmail,
+    userName: entry.userName
+  }).returning();
+  return row ? toDto(row) : null;
+}
+async function listUploadHistory(options) {
+  if (!isDatabaseConfigured()) {
+    throw new Error("DATABASE_URL is not set \u2014 upload history requires Postgres");
+  }
+  await ensureUploadHistoryTable();
+  const db2 = getDb();
+  const limit = Math.min(Math.max(options.limit ?? 200, 1), 1e3);
+  const rows = options.userId ? await db2.select().from(uploadHistory).where(eq(uploadHistory.userId, options.userId)).orderBy(desc(uploadHistory.uploadedAt)).limit(limit) : await db2.select().from(uploadHistory).orderBy(desc(uploadHistory.uploadedAt)).limit(limit);
+  return rows.map(toDto);
+}
+
 // server/routes.ts
 var upload = multer({ storage: multer.memoryStorage() });
 var requireImageflow = requireAceSsoApp("imageflow");
@@ -942,12 +1096,17 @@ async function ensureWorkOrderDataLoaded() {
     await reloadExcelData();
   }
 }
+function folderOnlyPath(fullPath) {
+  const parts = fullPath.split("/").filter(Boolean);
+  if (parts.length <= 1) return fullPath;
+  return parts.slice(0, -1).join("/");
+}
 async function handleImageUpload(req, res) {
   try {
     if (!req.file) {
       return res.status(400).json({ error: "No file uploaded" });
     }
-    const { customerName, dept, workOrderNumber, imageName } = req.body;
+    const { customerName, dept, workOrderNumber, imageName, partNumber, rev } = req.body;
     if (!customerName || !dept || !workOrderNumber || !imageName) {
       return res.status(400).json({ error: "Missing required fields" });
     }
@@ -960,6 +1119,24 @@ async function handleImageUpload(req, res) {
       fileName,
       req.file.buffer
     );
+    const user = req.aceSsoUser;
+    try {
+      await recordUploadHistory({
+        workOrderNumber: String(workOrderNumber),
+        partNumber: String(partNumber ?? ""),
+        rev: String(rev ?? ""),
+        customerName: String(customerName),
+        folderPath: folderOnlyPath(result.path),
+        fileName,
+        webUrl: result.webUrl ?? null,
+        dept: String(dept),
+        userId: user?.id || user?.sub || "unknown",
+        userEmail: user?.email || "unknown",
+        userName: user?.name || user?.email || "Unknown User"
+      });
+    } catch (histErr) {
+      console.warn("[uploadHistory] failed to record:", histErr?.message || histErr);
+    }
     res.json(result);
   } catch (error) {
     console.error("SharePoint upload error:", error);
@@ -991,6 +1168,37 @@ async function registerRoutes(app2) {
     upload.single("imageFile"),
     handleImageUpload
   );
+  app2.get("/api/upload-history", requireImageflow, async (req, res) => {
+    try {
+      const scope = String(req.query.scope || "mine").toLowerCase();
+      const user = req.aceSsoUser;
+      const userId = user?.id || user?.sub;
+      if (scope === "all") {
+        const rows2 = await listUploadHistory({});
+        return res.json({
+          scope: "all",
+          databaseConfigured: isDatabaseConfigured(),
+          items: rows2
+        });
+      }
+      if (!userId) {
+        return res.status(401).json({ error: "Not authenticated" });
+      }
+      const rows = await listUploadHistory({ userId });
+      res.json({
+        scope: "mine",
+        databaseConfigured: isDatabaseConfigured(),
+        items: rows
+      });
+    } catch (error) {
+      console.error("Error fetching upload history:", error);
+      res.status(500).json({
+        error: "Failed to fetch upload history",
+        message: error.message || String(error),
+        databaseConfigured: isDatabaseConfigured()
+      });
+    }
+  });
   app2.get("/api/work-orders", requireImageflow, async (_req, res) => {
     try {
       await ensureWorkOrderDataLoaded();
@@ -1087,7 +1295,7 @@ function initializeScheduler() {
   console.log("[Scheduler] Initializing Excel SFTP update scheduler...");
   const cronExpression = "20 7 * * *";
   cron.schedule(cronExpression, async () => {
-    const timestamp = (/* @__PURE__ */ new Date()).toLocaleString("en-US", {
+    const timestamp2 = (/* @__PURE__ */ new Date()).toLocaleString("en-US", {
       timeZone: "America/New_York",
       year: "numeric",
       month: "2-digit",
@@ -1097,7 +1305,7 @@ function initializeScheduler() {
       second: "2-digit",
       hour12: false
     });
-    await runExcelUpdate(`Running scheduled Excel SFTP update at ${timestamp} EST/EDT`);
+    await runExcelUpdate(`Running scheduled Excel SFTP update at ${timestamp2} EST/EDT`);
   }, {
     timezone: "America/New_York"
   });
