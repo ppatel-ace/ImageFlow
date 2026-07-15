@@ -1,9 +1,13 @@
 /**
  * SharePoint uploads via Azure AD app client credentials (GCC High).
  * Token: login.microsoftonline.us → Graph: graph.microsoft.us
+ * Auth: AZURE_CLIENT_SECRET, or certificate (PEM/key — preferred for Workload ID CA).
  * Prefer SHAREPOINT_SITE_ID when using Sites.Selected (hostname lookup often 403s).
  * Folder layout: ACE/{Customer}/{Dept}/{WorkOrder}/
  */
+
+import { createHash, createSign, randomUUID, X509Certificate } from "crypto";
+import { existsSync, readFileSync } from "fs";
 
 interface TokenCache {
   accessToken: string;
@@ -16,6 +20,8 @@ let cachedDriveId: string | null = null;
 
 const GRAPH_BASE = "https://graph.microsoft.us/v1.0";
 const TOKEN_URL_BASE = "https://login.microsoftonline.us";
+const CLIENT_ASSERTION_TYPE =
+  "urn:ietf:params:oauth:client-assertion-type:jwt-bearer";
 
 function sanitizePathSegment(value: string): string {
   return value.replace(/[<>:"/\\|?*]/g, "_");
@@ -25,6 +31,74 @@ function requireEnv(name: string): string {
   const v = process.env[name]?.trim();
   if (!v) throw new Error(`Missing required env var: ${name}`);
   return v;
+}
+
+function base64Url(buf: Buffer): string {
+  return buf
+    .toString("base64")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+}
+
+function loadClientCertificate(): { privateKeyPem: string; x5tS256: string } {
+  const certPath = requireEnv("AZURE_CLIENT_CERT_PATH");
+  const keyPath =
+    process.env.AZURE_CLIENT_CERT_KEY_PATH?.trim() ||
+    certPath.replace(/\.(pem|cer|crt)$/i, ".key");
+
+  if (!existsSync(certPath)) {
+    throw new Error(`AZURE_CLIENT_CERT_PATH not found: ${certPath}`);
+  }
+  if (!existsSync(keyPath)) {
+    throw new Error(`Private key not found: ${keyPath}`);
+  }
+
+  const certRaw = readFileSync(certPath);
+  const keyPem = readFileSync(keyPath, "utf8");
+  // Accept PEM or DER (.cer)
+  const x509 = new X509Certificate(certRaw);
+  const x5tS256 = base64Url(createHash("sha256").update(x509.raw).digest());
+
+  return { privateKeyPem: keyPem, x5tS256 };
+}
+
+function buildClientAssertion(tokenUrl: string, clientId: string): string {
+  const { privateKeyPem, x5tS256 } = loadClientCertificate();
+  const now = Math.floor(Date.now() / 1000);
+  const header = base64Url(
+    Buffer.from(
+      JSON.stringify({
+        alg: "RS256",
+        typ: "JWT",
+        "x5t#S256": x5tS256,
+      }),
+    ),
+  );
+  const payload = base64Url(
+    Buffer.from(
+      JSON.stringify({
+        aud: tokenUrl,
+        iss: clientId,
+        sub: clientId,
+        jti: randomUUID(),
+        nbf: now - 60,
+        exp: now + 600,
+      }),
+    ),
+  );
+  const data = `${header}.${payload}`;
+  const signer = createSign("RSA-SHA256");
+  signer.update(data);
+  signer.end();
+  const signature = base64Url(signer.sign(privateKeyPem));
+  return `${data}.${signature}`;
+}
+
+export function getAzureCredentialMode(): "secret" | "certificate" | "none" {
+  if (process.env.AZURE_CLIENT_SECRET?.trim()) return "secret";
+  if (process.env.AZURE_CLIENT_CERT_PATH?.trim()) return "certificate";
+  return "none";
 }
 
 function sitesPermissionHint(status: number, body: string): string {
@@ -48,19 +122,30 @@ async function getAccessToken(): Promise<string> {
 
   const tenantId = requireEnv("AZURE_TENANT_ID");
   const clientId = requireEnv("AZURE_CLIENT_ID");
-  const clientSecret = requireEnv("AZURE_CLIENT_SECRET");
+  const tokenUrl = `${TOKEN_URL_BASE}/${tenantId}/oauth2/v2.0/token`;
 
-  const body = new URLSearchParams({
+  const params = new URLSearchParams({
     grant_type: "client_credentials",
     client_id: clientId,
-    client_secret: clientSecret,
     scope: "https://graph.microsoft.us/.default",
   });
 
-  const res = await fetch(`${TOKEN_URL_BASE}/${tenantId}/oauth2/v2.0/token`, {
+  const secret = process.env.AZURE_CLIENT_SECRET?.trim();
+  if (secret) {
+    params.set("client_secret", secret);
+  } else if (process.env.AZURE_CLIENT_CERT_PATH?.trim()) {
+    params.set("client_assertion_type", CLIENT_ASSERTION_TYPE);
+    params.set("client_assertion", buildClientAssertion(tokenUrl, clientId));
+  } else {
+    throw new Error(
+      "Missing Azure credentials: set AZURE_CLIENT_SECRET or AZURE_CLIENT_CERT_PATH (+ key)",
+    );
+  }
+
+  const res = await fetch(tokenUrl, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body,
+    body: params,
   });
 
   if (!res.ok) {
@@ -267,6 +352,8 @@ export function getSharePointEnvStatus(): {
   azureTenantSet: boolean;
   azureClientSet: boolean;
   azureSecretSet: boolean;
+  azureCertSet: boolean;
+  azureCredentialMode: "secret" | "certificate" | "none";
   siteIdSet: boolean;
   siteHostname: string;
   sitePath: string;
@@ -275,9 +362,51 @@ export function getSharePointEnvStatus(): {
     azureTenantSet: Boolean(process.env.AZURE_TENANT_ID?.trim()),
     azureClientSet: Boolean(process.env.AZURE_CLIENT_ID?.trim()),
     azureSecretSet: Boolean(process.env.AZURE_CLIENT_SECRET?.trim()),
+    azureCertSet: Boolean(process.env.AZURE_CLIENT_CERT_PATH?.trim()),
+    azureCredentialMode: getAzureCredentialMode(),
     siteIdSet: Boolean(process.env.SHAREPOINT_SITE_ID?.trim()),
     siteHostname:
       process.env.SHAREPOINT_SITE_HOSTNAME?.trim() || "aceelectronics.sharepoint.us",
     sitePath: process.env.SHAREPOINT_SITE_PATH?.trim() || "/sites/jobtravelerphotos",
   };
+}
+
+/** Connectivity check: token → site → drive (and optional tiny upload). */
+export async function probeSharePointAccess(options?: {
+  uploadTest?: boolean;
+}): Promise<{
+  ok: boolean;
+  credentialMode: "secret" | "certificate" | "none";
+  siteId?: string;
+  driveId?: string;
+  uploadPath?: string;
+  error?: string;
+}> {
+  const credentialMode = getAzureCredentialMode();
+  try {
+    await getAccessToken();
+    const siteId = await resolveSiteId();
+    const driveId = await resolveDriveId(siteId);
+
+    let uploadPath: string | undefined;
+    if (options?.uploadTest) {
+      const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+      const result = await uploadFileToSharePoint(
+        "_ImageFlowProbe",
+        "IT",
+        "PROBE",
+        `probe-${stamp}.txt`,
+        Buffer.from(`ImageFlow SharePoint probe ${stamp}\n`, "utf8"),
+      );
+      uploadPath = result.path;
+    }
+
+    return { ok: true, credentialMode, siteId, driveId, uploadPath };
+  } catch (err) {
+    return {
+      ok: false,
+      credentialMode,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
 }

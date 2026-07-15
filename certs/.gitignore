@@ -1,0 +1,7 @@
+# Never commit private keys, PFX, or public certs from this folder
+*.key
+*.pem
+*.pfx
+*.cer
+*.meta.json
+*.b64.txt
