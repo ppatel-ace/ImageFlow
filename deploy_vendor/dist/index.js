@@ -534,6 +534,18 @@ async function uploadFileToSharePoint(customerName, dept, workOrderNumber, fileN
     );
   }
   const uploaded = await uploadRes.json().catch(() => ({}));
+  if (uploaded.id) {
+    const checkinRes = await graphFetch(`/drives/${driveId}/items/${uploaded.id}/checkin`, {
+      method: "POST",
+      body: JSON.stringify({ comment: "ImageFlow upload" })
+    });
+    if (!checkinRes.ok) {
+      const text = await checkinRes.text().catch(() => "");
+      console.warn(
+        `SharePoint check-in failed for ${sanitizedFile} (${checkinRes.status}): ${text.slice(0, 200)}`
+      );
+    }
+  }
   return {
     success: true,
     path: `${folderPath}/${sanitizedFile}`,
