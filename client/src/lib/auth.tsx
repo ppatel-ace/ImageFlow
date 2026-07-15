@@ -57,17 +57,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const logout = useCallback(async () => {
-    try {
-      await fetch("/api/auth/sso/logout", {
-        method: "POST",
-        credentials: "include",
-      });
-    } catch {
-      /* ignore */
-    }
-    setState({ status: "unauthenticated", ssoLoginUrl: null, ssoEnabled: true });
-    await refresh();
-  }, [refresh]);
+    // Clear cookie then go to central SSO (one login page for all apps).
+    window.location.assign("/api/auth/sso/logout");
+  }, []);
 
   useEffect(() => {
     void refresh();

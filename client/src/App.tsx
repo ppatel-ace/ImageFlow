@@ -29,7 +29,16 @@ function AuthGate() {
     );
   }
 
+  // No local login UI — bounce to central ACE SSO (or fallback LoginPage redirect).
   if (auth.status === "unauthenticated") {
+    if (auth.ssoLoginUrl && typeof window !== "undefined") {
+      window.location.replace(auth.ssoLoginUrl);
+      return (
+        <div className="flex min-h-screen items-center justify-center bg-background text-foreground">
+          <p className="text-sm text-muted-foreground">Redirecting to ACE SSO…</p>
+        </div>
+      );
+    }
     return <LoginPage />;
   }
 

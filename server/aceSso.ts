@@ -238,15 +238,28 @@ export function requireAceSsoApp(app: AceAppSlug) {
 }
 
 /**
- * Serve the SPA without hard-redirecting to SSO. When a cookie is present,
- * refresh it. Login UX is handled by the client (LoginPage).
+ * SPA gate: refresh SSO cookie when present; if SSO is enabled and there is
+ * no session, hard-redirect to the central ACE SSO login (one login page).
  * API routes remain gated via requireAceSsoApp.
  */
-export function requireAceSsoSpa(_app: AceAppSlug) {
+export function requireAceSsoSpa(app: AceAppSlug) {
   return (req: AceAuthRequest, res: Response, next: NextFunction): void => {
     if (req.path.startsWith("/api/") || req.path === "/health") return next();
     if (req.method !== "GET" && req.method !== "HEAD") return next();
-    tryAceSsoFromRequest(req, res);
+
+    if (!isSsoEnabled()) {
+      return next();
+    }
+
+    const payload = tryAceSsoFromRequest(req, res);
+    if (payload && hasAppAccess(payload, app)) {
+      return next();
+    }
+
+    const loginUrl = buildSsoLoginUrl(req, req.path || "/");
+    if (loginUrl) {
+      return res.redirect(302, loginUrl);
+    }
     return next();
   };
 }

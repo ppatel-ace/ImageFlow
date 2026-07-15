@@ -862,11 +862,21 @@ function requireAceSsoApp(app2) {
     next();
   };
 }
-function requireAceSsoSpa(_app) {
+function requireAceSsoSpa(app2) {
   return (req, res, next) => {
     if (req.path.startsWith("/api/") || req.path === "/health") return next();
     if (req.method !== "GET" && req.method !== "HEAD") return next();
-    tryAceSsoFromRequest(req, res);
+    if (!isSsoEnabled()) {
+      return next();
+    }
+    const payload = tryAceSsoFromRequest(req, res);
+    if (payload && hasAppAccess(payload, app2)) {
+      return next();
+    }
+    const loginUrl = buildSsoLoginUrl(req, req.path || "/");
+    if (loginUrl) {
+      return res.redirect(302, loginUrl);
+    }
     return next();
   };
 }
