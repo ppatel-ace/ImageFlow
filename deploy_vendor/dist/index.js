@@ -262,11 +262,14 @@ async function checkForNewExcelFile() {
 }
 
 // server/sharepoint.ts
+import { createHash, createSign, randomUUID, X509Certificate } from "crypto";
+import { existsSync as existsSync3, readFileSync as readFileSync2 } from "fs";
 var tokenCache = null;
 var cachedSiteId = null;
 var cachedDriveId = null;
 var GRAPH_BASE = "https://graph.microsoft.us/v1.0";
 var TOKEN_URL_BASE = "https://login.microsoftonline.us";
+var CLIENT_ASSERTION_TYPE = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer";
 function sanitizePathSegment(value) {
   return value.replace(/[<>:"/\\|?*]/g, "_");
 }
@@ -274,6 +277,104 @@ function requireEnv(name) {
   const v = process.env[name]?.trim();
   if (!v) throw new Error(`Missing required env var: ${name}`);
   return v;
+}
+function base64Url(buf) {
+  return buf.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+function decodeBase64Env(name) {
+  const raw = requireEnv(name);
+  try {
+    return Buffer.from(raw, "base64");
+  } catch {
+    throw new Error(`Invalid base64 in ${name}`);
+  }
+}
+function hasCertificateConfigured() {
+  return Boolean(
+    process.env.AZURE_CLIENT_CERT_PEM_BASE64?.trim() || process.env.AZURE_CLIENT_CERT_PATH?.trim()
+  );
+}
+function loadClientCertificate() {
+  let certRaw;
+  let keyPem;
+  const pemB64 = process.env.AZURE_CLIENT_CERT_PEM_BASE64?.trim();
+  if (pemB64) {
+    certRaw = decodeBase64Env("AZURE_CLIENT_CERT_PEM_BASE64");
+    keyPem = decodeBase64Env("AZURE_CLIENT_CERT_KEY_BASE64").toString("utf8");
+  } else {
+    const certPath = requireEnv("AZURE_CLIENT_CERT_PATH");
+    const keyPath = process.env.AZURE_CLIENT_CERT_KEY_PATH?.trim() || certPath.replace(/\.(pem|cer|crt)$/i, ".key");
+    if (!existsSync3(certPath)) {
+      throw new Error(`AZURE_CLIENT_CERT_PATH not found: ${certPath}`);
+    }
+    if (!existsSync3(keyPath)) {
+      throw new Error(`Private key not found: ${keyPath}`);
+    }
+    certRaw = readFileSync2(certPath);
+    keyPem = readFileSync2(keyPath, "utf8");
+  }
+  const x509 = new X509Certificate(certRaw);
+  const x5tS256 = base64Url(createHash("sha256").update(x509.raw).digest());
+  return { privateKeyPem: keyPem, x5tS256 };
+}
+function buildClientAssertion(tokenUrl, clientId) {
+  const { privateKeyPem, x5tS256 } = loadClientCertificate();
+  const now = Math.floor(Date.now() / 1e3);
+  const header = base64Url(
+    Buffer.from(
+      JSON.stringify({
+        alg: "RS256",
+        typ: "JWT",
+        "x5t#S256": x5tS256
+      })
+    )
+  );
+  const payload = base64Url(
+    Buffer.from(
+      JSON.stringify({
+        aud: tokenUrl,
+        iss: clientId,
+        sub: clientId,
+        jti: randomUUID(),
+        nbf: now - 60,
+        exp: now + 600
+      })
+    )
+  );
+  const data = `${header}.${payload}`;
+  const signer = createSign("RSA-SHA256");
+  signer.update(data);
+  signer.end();
+  const signature = base64Url(signer.sign(privateKeyPem));
+  return `${data}.${signature}`;
+}
+function getAzureCredentialMode() {
+  const secret = process.env.AZURE_CLIENT_SECRET?.trim();
+  const secretLooksLikeGuidOnly = !!secret && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(secret);
+  if (secret && !secretLooksLikeGuidOnly) return "secret";
+  if (hasCertificateConfigured()) return "certificate";
+  return "none";
+}
+function applyClientCredential(params, tokenUrl, clientId) {
+  const secret = process.env.AZURE_CLIENT_SECRET?.trim();
+  const secretLooksLikeGuidOnly = !!secret && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(secret);
+  if (secret && !secretLooksLikeGuidOnly) {
+    params.set("client_secret", secret);
+    return;
+  }
+  if (hasCertificateConfigured()) {
+    params.set("client_assertion_type", CLIENT_ASSERTION_TYPE);
+    params.set("client_assertion", buildClientAssertion(tokenUrl, clientId));
+    return;
+  }
+  if (secretLooksLikeGuidOnly) {
+    throw new Error(
+      "AZURE_CLIENT_SECRET looks like a Secret ID (GUID), not the secret Value. Delete AZURE_CLIENT_SECRET in Portainer and use certificate auth (AZURE_CLIENT_CERT_PEM_BASE64 + AZURE_CLIENT_CERT_KEY_BASE64)."
+    );
+  }
+  throw new Error(
+    "Missing Azure credentials: set AZURE_CLIENT_CERT_PEM_BASE64 + AZURE_CLIENT_CERT_KEY_BASE64 (Portainer), or AZURE_CLIENT_CERT_PATH (+ key), or AZURE_CLIENT_SECRET (secret Value, not Secret ID)."
+  );
 }
 function sitesPermissionHint(status, body) {
   if (status !== 403 && status !== 401) return "";
@@ -285,17 +386,17 @@ async function getAccessToken() {
   }
   const tenantId = requireEnv("AZURE_TENANT_ID");
   const clientId = requireEnv("AZURE_CLIENT_ID");
-  const clientSecret = requireEnv("AZURE_CLIENT_SECRET");
-  const body = new URLSearchParams({
+  const tokenUrl = `${TOKEN_URL_BASE}/${tenantId}/oauth2/v2.0/token`;
+  const params = new URLSearchParams({
     grant_type: "client_credentials",
     client_id: clientId,
-    client_secret: clientSecret,
     scope: "https://graph.microsoft.us/.default"
   });
-  const res = await fetch(`${TOKEN_URL_BASE}/${tenantId}/oauth2/v2.0/token`, {
+  applyClientCredential(params, tokenUrl, clientId);
+  const res = await fetch(tokenUrl, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body
+    body: params
   });
   if (!res.ok) {
     const text = await res.text().catch(() => "");
@@ -444,6 +545,8 @@ function getSharePointEnvStatus() {
     azureTenantSet: Boolean(process.env.AZURE_TENANT_ID?.trim()),
     azureClientSet: Boolean(process.env.AZURE_CLIENT_ID?.trim()),
     azureSecretSet: Boolean(process.env.AZURE_CLIENT_SECRET?.trim()),
+    azureCertSet: hasCertificateConfigured(),
+    azureCredentialMode: getAzureCredentialMode(),
     siteIdSet: Boolean(process.env.SHAREPOINT_SITE_ID?.trim()),
     siteHostname: process.env.SHAREPOINT_SITE_HOSTNAME?.trim() || "aceelectronics.sharepoint.us",
     sitePath: process.env.SHAREPOINT_SITE_PATH?.trim() || "/sites/jobtravelerphotos"

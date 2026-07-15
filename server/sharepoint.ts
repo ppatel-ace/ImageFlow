@@ -122,9 +122,46 @@ function buildClientAssertion(tokenUrl: string, clientId: string): string {
 }
 
 export function getAzureCredentialMode(): "secret" | "certificate" | "none" {
-  if (process.env.AZURE_CLIENT_SECRET?.trim()) return "secret";
+  const secret = process.env.AZURE_CLIENT_SECRET?.trim();
+  const secretLooksLikeGuidOnly =
+    !!secret &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(secret);
+
+  if (secret && !secretLooksLikeGuidOnly) return "secret";
   if (hasCertificateConfigured()) return "certificate";
   return "none";
+}
+
+/** Prefer certificate for Workload ID; skip Secret-ID mistakes so cert can take over. */
+function applyClientCredential(params: URLSearchParams, tokenUrl: string, clientId: string): void {
+  const secret = process.env.AZURE_CLIENT_SECRET?.trim();
+  const secretLooksLikeGuidOnly =
+    !!secret &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(secret);
+
+  if (secret && !secretLooksLikeGuidOnly) {
+    params.set("client_secret", secret);
+    return;
+  }
+
+  if (hasCertificateConfigured()) {
+    params.set("client_assertion_type", CLIENT_ASSERTION_TYPE);
+    params.set("client_assertion", buildClientAssertion(tokenUrl, clientId));
+    return;
+  }
+
+  if (secretLooksLikeGuidOnly) {
+    throw new Error(
+      "AZURE_CLIENT_SECRET looks like a Secret ID (GUID), not the secret Value. " +
+        "Delete AZURE_CLIENT_SECRET in Portainer and use certificate auth " +
+        "(AZURE_CLIENT_CERT_PEM_BASE64 + AZURE_CLIENT_CERT_KEY_BASE64).",
+    );
+  }
+
+  throw new Error(
+    "Missing Azure credentials: set AZURE_CLIENT_CERT_PEM_BASE64 + AZURE_CLIENT_CERT_KEY_BASE64 (Portainer), " +
+      "or AZURE_CLIENT_CERT_PATH (+ key), or AZURE_CLIENT_SECRET (secret Value, not Secret ID).",
+  );
 }
 
 function sitesPermissionHint(status: number, body: string): string {
@@ -156,17 +193,7 @@ async function getAccessToken(): Promise<string> {
     scope: "https://graph.microsoft.us/.default",
   });
 
-  const secret = process.env.AZURE_CLIENT_SECRET?.trim();
-  if (secret) {
-    params.set("client_secret", secret);
-  } else if (hasCertificateConfigured()) {
-    params.set("client_assertion_type", CLIENT_ASSERTION_TYPE);
-    params.set("client_assertion", buildClientAssertion(tokenUrl, clientId));
-  } else {
-    throw new Error(
-      "Missing Azure credentials: set AZURE_CLIENT_SECRET, or AZURE_CLIENT_CERT_PEM_BASE64 + AZURE_CLIENT_CERT_KEY_BASE64 (Portainer), or AZURE_CLIENT_CERT_PATH (+ key)",
-    );
-  }
+  applyClientCredential(params, tokenUrl, clientId);
 
   const res = await fetch(tokenUrl, {
     method: "POST",
