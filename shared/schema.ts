@@ -18,7 +18,7 @@ export type InsertUser = z.infer<typeof insertUserSchema>;
 export type User = typeof users.$inferSelect;
 
 /** SharePoint upload audit — one row per successfully uploaded image. */
-export const uploadHistory = pgTable("upload_history", {
+export const uploadHistory = pgTable("imageflow_upload_history", {
   id: text("id").primaryKey(),
   uploadedAt: timestamp("uploaded_at", { withTimezone: true }).notNull().defaultNow(),
   workOrderNumber: text("work_order_number").notNull(),
