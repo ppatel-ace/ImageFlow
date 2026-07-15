@@ -3,7 +3,7 @@
  * Token: login.microsoftonline.us → Graph: graph.microsoft.us
  * Auth: AZURE_CLIENT_SECRET, or certificate (PEM/key or Portainer base64 — preferred for Workload ID CA).
  * Prefer SHAREPOINT_SITE_ID when using Sites.Selected (hostname lookup often 403s).
- * Folder layout: ACE/{Customer}/{Dept}/{WorkOrder}/
+ * Folder layout: {QC|Testing|Production}/{Customer}/{WorkOrder}/
  */
 
 import { createHash, createSign, randomUUID, X509Certificate } from "crypto";
@@ -368,7 +368,7 @@ export async function uploadFileToSharePoint(
   const sanitizedDept = sanitizePathSegment(dept);
   const sanitizedWo = sanitizePathSegment(workOrderNumber);
   const sanitizedFile = sanitizePathSegment(fileName);
-  const folderPath = `ACE/${sanitizedCustomer}/${sanitizedDept}/${sanitizedWo}`;
+  const folderPath = `${sanitizedDept}/${sanitizedCustomer}/${sanitizedWo}`;
 
   await ensureFolderPath(driveId, folderPath);
 
@@ -464,7 +464,7 @@ export async function probeSharePointAccess(options?: {
       const stamp = new Date().toISOString().replace(/[:.]/g, "-");
       const result = await uploadFileToSharePoint(
         "_ImageFlowProbe",
-        "IT",
+        "Testing",
         "PROBE",
         `probe-${stamp}.txt`,
         Buffer.from(`ImageFlow SharePoint probe ${stamp}\n`, "utf8"),

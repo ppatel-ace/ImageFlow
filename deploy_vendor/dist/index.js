@@ -516,7 +516,7 @@ async function uploadFileToSharePoint(customerName, dept, workOrderNumber, fileN
   const sanitizedDept = sanitizePathSegment(dept);
   const sanitizedWo = sanitizePathSegment(workOrderNumber);
   const sanitizedFile = sanitizePathSegment(fileName);
-  const folderPath = `ACE/${sanitizedCustomer}/${sanitizedDept}/${sanitizedWo}`;
+  const folderPath = `${sanitizedDept}/${sanitizedCustomer}/${sanitizedWo}`;
   await ensureFolderPath(driveId, folderPath);
   const uploadPath = `/drives/${driveId}/root:/${driveItemPath([
     ...folderPath.split("/").filter(Boolean),

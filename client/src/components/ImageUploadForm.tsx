@@ -212,9 +212,8 @@ export default function ImageUploadForm() {
     try {
       if ('showDirectoryPicker' in window) {
         const directoryHandle = await (window as any).showDirectoryPicker();
-        const folderHandle = await directoryHandle.getDirectoryHandle('ACE', { create: true })
+        const folderHandle = await directoryHandle.getDirectoryHandle(dept, { create: true })
           .then((h: any) => h.getDirectoryHandle(sanitizedCustomerName, { create: true }))
-          .then((h: any) => h.getDirectoryHandle(dept, { create: true }))
           .then((h: any) => h.getDirectoryHandle(workOrderNumber, { create: true }));
         
         for (const image of capturedImages) {
@@ -227,7 +226,7 @@ export default function ImageUploadForm() {
         
         toast({
           title: "Saved Successfully",
-          description: `${capturedImages.length} image(s) saved to ACE/${sanitizedCustomerName}/${dept}/${workOrderNumber}/`,
+          description: `${capturedImages.length} image(s) saved to ${dept}/${sanitizedCustomerName}/${workOrderNumber}/`,
         });
       } else {
         for (const image of capturedImages) {
@@ -245,7 +244,7 @@ export default function ImageUploadForm() {
         
         toast({
           title: "Download Started",
-          description: `${capturedImages.length} image(s) downloaded. Please create folders: ACE/${sanitizedCustomerName}/${dept}/${workOrderNumber}/ and move the files there.`,
+          description: `${capturedImages.length} image(s) downloaded. Please create folders: ${dept}/${sanitizedCustomerName}/${workOrderNumber}/ and move the files there.`,
         });
       }
       
@@ -621,6 +620,7 @@ export default function ImageUploadForm() {
                 <SelectContent>
                   <SelectItem value="QC">QC</SelectItem>
                   <SelectItem value="Testing">Testing</SelectItem>
+                  <SelectItem value="Production">Production</SelectItem>
                 </SelectContent>
               </Select>
               {form.formState.errors.dept && (
@@ -982,7 +982,7 @@ export default function ImageUploadForm() {
               <div className="flex-1 min-w-0">
                 <h3 className="text-xs sm:text-sm font-medium text-muted-foreground mb-1">Folder Path</h3>
                 <p className="font-mono text-sm sm:text-base text-foreground break-all" data-testid="text-folder-path">
-                  ACE / {customerName || "[Customer Name]"} / {dept || "[Dept]"} / {workOrderNumber || "[Work Order #]"}
+                  {dept || "[QC / Testing / Production]"} / {customerName || "[Customer Name]"} / {workOrderNumber || "[Work Order #]"}
                 </p>
               </div>
             </div>

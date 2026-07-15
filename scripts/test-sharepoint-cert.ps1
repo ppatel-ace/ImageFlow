@@ -104,7 +104,7 @@ Write-Host "Drive OK: $($drive.name) ($($drive.id))" -ForegroundColor Green
 if ($UploadTest) {
   Write-Host "`n=== 5) Upload probe file ===" -ForegroundColor Cyan
   $stamp = (Get-Date).ToUniversalTime().ToString("yyyyMMdd-HHmmss")
-  $folder = "ACE/_ImageFlowProbe/IT/PROBE"
+  $folder = "Testing/_ImageFlowProbe/PROBE"
   $fileName = "probe-$stamp.txt"
   $content = [Text.Encoding]::UTF8.GetBytes("ImageFlow SharePoint probe $stamp`n")
   $uploadUri = "$graph/drives/$($drive.id)/root:/$folder/$fileName`:/content"
