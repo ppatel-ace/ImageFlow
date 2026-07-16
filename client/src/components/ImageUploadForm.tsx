@@ -18,9 +18,14 @@ import { cn } from "@/lib/utils";
 import CustomCamera from "@/components/CustomCamera";
 import { shouldUseCustomCamera } from "@/lib/deviceDetection";
 
-// Sanitize path components by replacing invalid characters with underscore
+// SharePoint-safe path segment (no trailing "." — e.g. "CACI TECHNOLOGIES, INC.")
 const sanitizePath = (value: string): string => {
-  return value.replace(/[<>:"/\\|?*]/g, '_');
+  let name = value
+    .replace(/[<>:"/\\|?*#%\x00-\x1f]/g, "_")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/^[.\s]+|[.\s]+$/g, "");
+  return name || "_";
 };
 
 const uploadFormSchema = z.object({

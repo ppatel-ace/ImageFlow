@@ -23,8 +23,20 @@ const TOKEN_URL_BASE = "https://login.microsoftonline.us";
 const CLIENT_ASSERTION_TYPE =
   "urn:ietf:params:oauth:client-assertion-type:jwt-bearer";
 
+/**
+ * SharePoint/OneDrive folder & file names cannot contain <>:"/\|?*
+ * and must not start/end with a space or period (e.g. "CACI TECHNOLOGIES, INC.").
+ */
 function sanitizePathSegment(value: string): string {
-  return value.replace(/[<>:"/\\|?*]/g, "_");
+  let name = value
+    .replace(/[<>:"/\\|?*#%\x00-\x1f]/g, "_")
+    .replace(/\s+/g, " ")
+    .trim();
+  // Strip leading/trailing dots and spaces (SharePoint 400 if name ends with ".")
+  name = name.replace(/^[.\s]+|[.\s]+$/g, "");
+  // Avoid reserved device names / empty after sanitize
+  if (!name) name = "_";
+  return name;
 }
 
 function requireEnv(name: string): string {

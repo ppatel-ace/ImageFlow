@@ -277,7 +277,10 @@ var GRAPH_BASE = "https://graph.microsoft.us/v1.0";
 var TOKEN_URL_BASE = "https://login.microsoftonline.us";
 var CLIENT_ASSERTION_TYPE = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer";
 function sanitizePathSegment(value) {
-  return value.replace(/[<>:"/\\|?*]/g, "_");
+  let name = value.replace(/[<>:"/\\|?*#%\x00-\x1f]/g, "_").replace(/\s+/g, " ").trim();
+  name = name.replace(/^[.\s]+|[.\s]+$/g, "");
+  if (!name) name = "_";
+  return name;
 }
 function requireEnv(name) {
   const v = process.env[name]?.trim();
