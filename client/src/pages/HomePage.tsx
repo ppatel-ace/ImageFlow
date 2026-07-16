@@ -20,13 +20,15 @@ export default function HomePage() {
         <div className="mx-auto flex max-w-7xl items-center justify-between px-3 py-3 sm:px-4 sm:py-4 md:px-6">
           <a
             href={getHubAppsUrl()}
-            className="flex items-center gap-2 no-underline rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:gap-3"
+            className="flex items-center gap-3 no-underline rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             aria-label="Back to ACE ERP"
           >
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary sm:h-10 sm:w-10">
-              <span className="text-base font-bold text-primary-foreground sm:text-lg">ACE</span>
-            </div>
-            <div>
+            <img
+              src="/ace-logo-white.png"
+              alt="Ace Electronics"
+              className="h-9 w-auto sm:h-11 brightness-0 dark:brightness-100"
+            />
+            <div className="min-w-0 border-l border-border pl-3">
               <h1 className="text-base font-semibold text-foreground sm:text-lg md:text-xl">
                 Ace Image Organizer
               </h1>

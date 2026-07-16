@@ -26,9 +26,11 @@ export default function LoginPage() {
 
       <div className="mx-auto flex min-h-screen max-w-md flex-col items-center justify-center px-6 py-12">
         <div className="mb-6 flex flex-col items-center text-center">
-          <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-xl bg-primary">
-            <span className="text-xl font-bold text-primary-foreground">ACE</span>
-          </div>
+          <img
+            src="/ace-logo-white.png"
+            alt="Ace Electronics"
+            className="mb-4 h-12 w-auto brightness-0 dark:brightness-100 sm:h-14"
+          />
           <h1 className="text-2xl font-semibold tracking-tight">Ace Image Organizer</h1>
           <p className="mt-2 text-sm text-muted-foreground">
             {ssoLoginUrl
