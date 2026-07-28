@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Camera, X } from "lucide-react";
 import { Card } from "@/components/ui/card";
+import { useToast } from "@/hooks/use-toast";
 
 interface CustomCameraProps {
   onCapture: (file: File) => void;
@@ -9,6 +10,7 @@ interface CustomCameraProps {
 }
 
 export default function CustomCamera({ onCapture, onClose }: CustomCameraProps) {
+  const { toast } = useToast();
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -81,7 +83,11 @@ export default function CustomCamera({ onCapture, onClose }: CustomCameraProps) 
       }
     } catch (error) {
       console.error("Error accessing camera:", error);
-      alert("Could not access camera. Please check permissions.");
+      toast({
+        title: "Camera unavailable",
+        description: "Could not access camera. Please check permissions.",
+        variant: "destructive",
+      });
       onClose();
     }
   };
