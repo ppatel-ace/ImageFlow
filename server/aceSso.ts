@@ -238,13 +238,38 @@ export function requireAceSsoApp(app: AceAppSlug) {
 }
 
 /**
+ * Paths that must never redirect to SSO (browser cannot follow SSO HTML
+ * for script/style fetches — results in CORS / net::ERR_FAILED).
+ * Security: hash-named bundles leak no secrets; APIs stay behind requireAceSsoApp.
+ */
+const STATIC_ASSET_PREFIXES = [
+  "/assets/",
+  "/src/", // Vite dev
+  "/@vite/",
+  "/@fs/",
+  "/@id/",
+  "/@react-refresh",
+  "/node_modules/",
+];
+
+const STATIC_ASSET_EXTENSIONS = /\.(js|mjs|cjs|css|map|ico|png|jpe?g|gif|svg|webp|woff2?|ttf|eot|txt|webmanifest)$/i;
+
+function isPublicStaticPath(pathname: string): boolean {
+  if (STATIC_ASSET_PREFIXES.some((p) => pathname.startsWith(p))) return true;
+  if (STATIC_ASSET_EXTENSIONS.test(pathname)) return true;
+  return false;
+}
+
+/**
  * SPA gate: refresh SSO cookie when present; if SSO is enabled and there is
  * no session, hard-redirect to the central ACE SSO login (one login page).
+ * Static assets are public so CSS/JS can load before/without a session.
  * API routes remain gated via requireAceSsoApp.
  */
 export function requireAceSsoSpa(app: AceAppSlug) {
   return (req: AceAuthRequest, res: Response, next: NextFunction): void => {
     if (req.path.startsWith("/api/") || req.path === "/health") return next();
+    if (isPublicStaticPath(req.path)) return next();
     if (req.method !== "GET" && req.method !== "HEAD") return next();
 
     if (!isSsoEnabled()) {
@@ -264,11 +289,17 @@ export function requireAceSsoSpa(app: AceAppSlug) {
   };
 }
 
+function safeSpaNextPath(nextPath: string | undefined): string {
+  if (!nextPath || !nextPath.startsWith("/") || nextPath.startsWith("//")) return "/";
+  // Avoid landing on a bundle URL after login (e.g. stale redirect_uri from SSO).
+  if (isPublicStaticPath(nextPath)) return "/";
+  return nextPath;
+}
+
 export function registerAceSsoRoutes(app: Express, appSlug: AceAppSlug = "imageflow"): void {
   app.get("/api/auth/sso/callback", (req, res) => {
     const rawToken = req.query.ace_token as string | undefined;
-    const nextPath = (req.query.next as string) || "/";
-    const safeNext = nextPath.startsWith("/") ? nextPath : "/";
+    const safeNext = safeSpaNextPath(req.query.next as string | undefined);
     if (!rawToken) return res.redirect(safeNext);
 
     const token = decodeURIComponent(rawToken);

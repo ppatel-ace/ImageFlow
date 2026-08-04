@@ -91,13 +91,15 @@ app.use((req, res, next) => {
     throw err;
   });
 
-  if (isSsoEnabled()) {
-    app.use(requireAceSsoSpa("imageflow"));
-  } else {
+  if (!isSsoEnabled()) {
     console.warn("[SSO] Disabled (set ENABLE_SSO=true to require ACE login)");
   }
 
   if (process.env.NODE_ENV === "development") {
+    // Gate HTML document routes; static exemptions live in requireAceSsoSpa.
+    if (isSsoEnabled()) {
+      app.use(requireAceSsoSpa("imageflow"));
+    }
     const viteModule = "./vite" + "";
     const { setupVite } = await import(viteModule);
     await setupVite(app, server);
@@ -111,7 +113,12 @@ app.use((req, res, next) => {
       );
     }
 
-    app.use(express.static(distPath));
+    // Built assets before SSO so CSS/JS never 302 to the login host (CORS breakage).
+    app.use(express.static(distPath, { index: false }));
+
+    if (isSsoEnabled()) {
+      app.use(requireAceSsoSpa("imageflow"));
+    }
 
     app.use("*", (_req, res) => {
       res.sendFile(path.resolve(distPath, "index.html"));
