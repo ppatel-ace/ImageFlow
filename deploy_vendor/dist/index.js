@@ -865,9 +865,25 @@ function requireAceSsoApp(app2) {
     next();
   };
 }
+const STATIC_ASSET_PREFIXES = [
+  "/assets/",
+  "/src/",
+  "/@vite/",
+  "/@fs/",
+  "/@id/",
+  "/@react-refresh",
+  "/node_modules/"
+];
+const STATIC_ASSET_EXTENSIONS = /\.(js|mjs|cjs|css|map|ico|png|jpe?g|gif|svg|webp|woff2?|ttf|eot|txt|webmanifest)$/i;
+function isPublicStaticPath(pathname) {
+  if (STATIC_ASSET_PREFIXES.some((p) => pathname.startsWith(p))) return true;
+  if (STATIC_ASSET_EXTENSIONS.test(pathname)) return true;
+  return false;
+}
 function requireAceSsoSpa(app2) {
   return (req, res, next) => {
     if (req.path.startsWith("/api/") || req.path === "/health") return next();
+    if (isPublicStaticPath(req.path)) return next();
     if (req.method !== "GET" && req.method !== "HEAD") return next();
     if (!isSsoEnabled()) {
       return next();
@@ -883,11 +899,15 @@ function requireAceSsoSpa(app2) {
     return next();
   };
 }
+function safeSpaNextPath(nextPath) {
+  if (!nextPath || !nextPath.startsWith("/") || nextPath.startsWith("//")) return "/";
+  if (isPublicStaticPath(nextPath)) return "/";
+  return nextPath;
+}
 function registerAceSsoRoutes(app2, appSlug = "imageflow") {
   app2.get("/api/auth/sso/callback", (req, res) => {
     const rawToken = req.query.ace_token;
-    const nextPath = req.query.next || "/";
-    const safeNext = nextPath.startsWith("/") ? nextPath : "/";
+    const safeNext = safeSpaNextPath(req.query.next);
     if (!rawToken) return res.redirect(safeNext);
     const token = decodeURIComponent(rawToken);
     const payload = verifyAceSsoToken(token);
@@ -1445,12 +1465,13 @@ app.use((req, res, next) => {
     res.status(status).json({ message });
     throw err;
   });
-  if (isSsoEnabled()) {
-    app.use(requireAceSsoSpa("imageflow"));
-  } else {
+  if (!isSsoEnabled()) {
     console.warn("[SSO] Disabled (set ENABLE_SSO=true to require ACE login)");
   }
   if (process.env.NODE_ENV === "development") {
+    if (isSsoEnabled()) {
+      app.use(requireAceSsoSpa("imageflow"));
+    }
     const viteModule = "./vite";
     const { setupVite } = await import(viteModule);
     await setupVite(app, server);
@@ -1462,7 +1483,11 @@ app.use((req, res, next) => {
         `Could not find the build directory: ${distPath}, make sure to build the client first`
       );
     }
-    app.use(express.static(distPath));
+    // Built assets before SSO so CSS/JS never 302 to the login host (CORS breakage).
+    app.use(express.static(distPath, { index: false }));
+    if (isSsoEnabled()) {
+      app.use(requireAceSsoSpa("imageflow"));
+    }
     app.use("*", (_req, res) => {
       res.sendFile(path.resolve(distPath, "index.html"));
     });
