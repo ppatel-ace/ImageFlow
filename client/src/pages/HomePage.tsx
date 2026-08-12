@@ -15,7 +15,7 @@ export default function HomePage() {
   };
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="flex min-h-screen flex-col bg-background">
       <header className="border-b border-border">
         <div className="mx-auto flex max-w-7xl items-center justify-between px-3 py-3 sm:px-4 sm:py-4 md:px-6">
           <a
@@ -80,7 +80,7 @@ export default function HomePage() {
         </div>
       </header>
 
-      <main className="py-4 sm:py-6 md:py-8">
+      <main className="flex-1 py-4 sm:py-6 md:py-8">
         <Tabs defaultValue="upload" className="mx-auto max-w-7xl px-3 sm:px-4 md:px-6">
           <TabsList className="mb-4 grid w-full grid-cols-2 sm:inline-flex sm:w-auto">
             <TabsTrigger value="upload" data-testid="tab-upload">
@@ -98,6 +98,12 @@ export default function HomePage() {
           </TabsContent>
         </Tabs>
       </main>
+
+      <footer className="border-t border-border py-4 text-center">
+        <p className="text-xs text-muted-foreground" data-testid="text-app-version">
+          version 1.1
+        </p>
+      </footer>
     </div>
   );
 }

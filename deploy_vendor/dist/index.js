@@ -894,6 +894,8 @@ function requireAceSsoSpa(app2) {
     }
     const loginUrl = buildSsoLoginUrl(req, req.path || "/");
     if (loginUrl) {
+      res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, private");
+      res.setHeader("Pragma", "no-cache");
       return res.redirect(302, loginUrl);
     }
     return next();
@@ -1416,6 +1418,7 @@ app.get("/health", (_req, res) => {
   res.json({
     ok: true,
     service: "imageflow",
+    build: "sso-static-fix-2",
     ssoEnabled: isSsoEnabled(),
     sftp: {
       configured: sftp.configured,
@@ -1483,12 +1486,22 @@ app.use((req, res, next) => {
         `Could not find the build directory: ${distPath}, make sure to build the client first`
       );
     }
-    // Built assets before SSO so CSS/JS never 302 to the login host (CORS breakage).
-    app.use(express.static(distPath, { index: false }));
+    // Built assets FIRST — never pass real files through SSO middleware.
+    app.use(express.static(distPath, {
+      index: false,
+      setHeaders(res, filePath) {
+        res.setHeader("Access-Control-Allow-Origin", "*");
+        if (filePath.includes(`${path.sep}assets${path.sep}`) || filePath.includes("/assets/")) {
+          res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+        }
+      }
+    }));
     if (isSsoEnabled()) {
       app.use(requireAceSsoSpa("imageflow"));
     }
     app.use("*", (_req, res) => {
+      res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, private");
+      res.setHeader("Pragma", "no-cache");
       res.sendFile(path.resolve(distPath, "index.html"));
     });
   }

@@ -413,10 +413,9 @@ export default function ImageUploadForm() {
           title: isAutoCheck ? "Auto-Update Successful!" : "Excel Data Updated!",
           description: `Updated from ${result.source || "remote"}: ${result.originalFileName}`,
         });
+        // Soft refresh only — full page reload re-runs the SSO gate and can bounce users to login.
+        await queryClient.invalidateQueries();
         await refetchWorkOrders();
-        setTimeout(() => {
-          window.location.reload();
-        }, 1500);
       } else {
         // Only show toast for manual checks, silent for auto-checks with no updates
         if (!isAutoCheck) {
@@ -586,7 +585,24 @@ export default function ImageUploadForm() {
               type="button"
               size="lg"
               className="min-h-12 sm:min-h-14 bg-blue-600 hover:bg-blue-700 text-white"
-              onClick={() => window.location.reload()}
+              onClick={async () => {
+                // Soft refresh keeps the SSO session cookie; window.location.reload()
+                // remounts AuthGate and can redirect users back to ACE SSO login.
+                try {
+                  await queryClient.invalidateQueries();
+                  await refetchWorkOrders();
+                  toast({
+                    title: "Page refreshed",
+                    description: "Work orders and data have been updated.",
+                  });
+                } catch (error: any) {
+                  toast({
+                    title: "Refresh failed",
+                    description: error?.message || "Could not refresh page data.",
+                    variant: "destructive",
+                  });
+                }
+              }}
               data-testid="button-hard-refresh"
             >
               <RefreshCw className="w-5 h-5 mr-2" />

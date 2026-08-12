@@ -31,6 +31,7 @@ app.get("/health", (_req, res) => {
   res.json({
     ok: true,
     service: "imageflow",
+    build: "sso-static-fix-2",
     ssoEnabled: isSsoEnabled(),
     sftp: {
       configured: sftp.configured,
@@ -113,14 +114,28 @@ app.use((req, res, next) => {
       );
     }
 
-    // Built assets before SSO so CSS/JS never 302 to the login host (CORS breakage).
-    app.use(express.static(distPath, { index: false }));
+    // Built assets FIRST — never pass real files through SSO middleware.
+    app.use(
+      express.static(distPath, {
+        index: false,
+        setHeaders(res, filePath) {
+          // Allow module/style loads even with accidental crossorigin attrs.
+          res.setHeader("Access-Control-Allow-Origin", "*");
+          if (filePath.includes(`${path.sep}assets${path.sep}`)) {
+            res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+          }
+        },
+      }),
+    );
 
     if (isSsoEnabled()) {
       app.use(requireAceSsoSpa("imageflow"));
     }
 
+    // HTML shell only (and unknown routes). Never cache — asset hashes change.
     app.use("*", (_req, res) => {
+      res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, private");
+      res.setHeader("Pragma", "no-cache");
       res.sendFile(path.resolve(distPath, "index.html"));
     });
   }

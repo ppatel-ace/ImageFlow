@@ -115,6 +115,9 @@ function setAceSsoCookie(res: Response, token: string): void {
     secure: process.env.NODE_ENV === "production",
     sameSite: "lax",
     path: "/",
+    // Persist across browser reloads for the JWT lifetime (session cookies can
+    // be dropped by some browsers / IT policies and look like a logout).
+    maxAge: SSO_JWT_EXPIRY_SECONDS * 1000,
     ...cookieDomainOptions(),
   });
 }
@@ -283,6 +286,13 @@ export function requireAceSsoSpa(app: AceAppSlug) {
 
     const loginUrl = buildSsoLoginUrl(req, req.path || "/");
     if (loginUrl) {
+      // Never let browsers / proxies cache SSO redirects (they previously
+      // poisoned /assets/* URLs and produced CORS failures after the fix).
+      res.setHeader(
+        "Cache-Control",
+        "no-store, no-cache, must-revalidate, private",
+      );
+      res.setHeader("Pragma", "no-cache");
       return res.redirect(302, loginUrl);
     }
     return next();
