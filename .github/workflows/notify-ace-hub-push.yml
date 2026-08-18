@@ -1,0 +1,136 @@
+# Template: notify ACE Hub of every push (standalone)
+#
+# Copy to your repo as `.github/workflows/notify-ace-hub-push.yml`
+# and set repository secrets:
+#   ACE_HUB_URL                  INTERNAL URL reachable from the self-hosted runner, e.g.:
+#                                  http://192.2.150.2:3200
+#                                  http://ace-hub:3200          (runner on ace-network)
+#                                  https://aceerp.aceelectronics.com  (only if LAN-resolvable)
+#   ACE_GIT_PUSH_INGEST_TOKEN    same value as ace-hub env ACE_GIT_PUSH_INGEST_TOKEN
+#
+# Runner: org/repo self-hosted with label ace-lan (see SELF_HOSTED_RUNNER.md).
+# REQUIRED per repo: set APP_SLUG to match plt_cicd_apps / Hub catalog
+# (e.g. inventory, jobtrack, crm, …). Do not leave the example value below.
+
+name: Notify ACE Hub push
+
+on:
+  push:
+
+jobs:
+  notify-ace-hub:
+    runs-on: [self-hosted, ace-lan]
+    env:
+      APP_SLUG: imageflow
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Collect commit + files and POST to ACE Hub
+        env:
+          ACE_HUB_URL: ${{ secrets.ACE_HUB_URL }}
+          ACE_GIT_PUSH_INGEST_TOKEN: ${{ secrets.ACE_GIT_PUSH_INGEST_TOKEN }}
+          BEFORE_SHA: ${{ github.event.before }}
+          HEAD_SHA: ${{ github.sha }}
+          REPO_FULL: ${{ github.repository }}
+          BRANCH_REF: ${{ github.ref_name }}
+          COMPARE_URL: ${{ github.event.compare }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          ACTOR: ${{ github.actor }}
+        run: |
+          set -euo pipefail
+          if [ -z "${ACE_HUB_URL:-}" ] || [ -z "${ACE_GIT_PUSH_INGEST_TOKEN:-}" ]; then
+            echo "::error::ACE_HUB_URL and ACE_GIT_PUSH_INGEST_TOKEN must be set as repository secrets. Notify failed (would have left Hub git-push history empty)."
+            exit 1
+          fi
+
+          ZERO="0000000000000000000000000000000000000000"
+          if [ -z "${BEFORE_SHA}" ] || [ "${BEFORE_SHA}" = "${ZERO}" ]; then
+            DIFF_RANGE="${HEAD_SHA}"
+            PARENT_SHA=""
+            # New branch / first push — list files in the commit itself
+            NAME_STATUS=$(git diff-tree --no-commit-id --name-status -r "${HEAD_SHA}" || true)
+          else
+            DIFF_RANGE="${BEFORE_SHA}...${HEAD_SHA}"
+            PARENT_SHA="${BEFORE_SHA}"
+            NAME_STATUS=$(git diff --name-status "${BEFORE_SHA}" "${HEAD_SHA}" || true)
+          fi
+
+          MSG=$(git log -1 --format=%B "${HEAD_SHA}" | head -c 4000)
+          AUTHOR_NAME=$(git log -1 --format=%an "${HEAD_SHA}")
+          AUTHOR_EMAIL=$(git log -1 --format=%ae "${HEAD_SHA}")
+          PUSHED_AT=$(git log -1 --format=%cI "${HEAD_SHA}")
+          HTML_URL="https://github.com/${REPO_FULL}/commit/${HEAD_SHA}"
+          SHORT_SHA=$(echo "${HEAD_SHA}" | cut -c1-7)
+
+          ADDED=$(echo "${NAME_STATUS}" | awk '$1 ~ /^A/ { print $2 }' | head -n 500)
+          MODIFIED=$(echo "${NAME_STATUS}" | awk '$1 ~ /^M/ { print $2 }' | head -n 500)
+          REMOVED=$(echo "${NAME_STATUS}" | awk '$1 ~ /^D/ { print $2 }' | head -n 500)
+          # Renames count as modified (new path)
+          RENAMED=$(echo "${NAME_STATUS}" | awk '$1 ~ /^R/ { print $NF }' | head -n 500)
+          if [ -n "${RENAMED}" ]; then
+            MODIFIED=$(printf '%s\n%s' "${MODIFIED}" "${RENAMED}" | sed '/^$/d' | head -n 500)
+          fi
+
+          json_array() {
+            if [ -z "${1:-}" ]; then
+              echo '[]'
+              return
+            fi
+            printf '%s\n' "$1" | jq -R -s -c 'split("\n") | map(select(length > 0))'
+          }
+
+          ADDED_JSON=$(json_array "${ADDED}")
+          MODIFIED_JSON=$(json_array "${MODIFIED}")
+          REMOVED_JSON=$(json_array "${REMOVED}")
+          ADD_N=$(echo "${ADDED_JSON}" | jq 'length')
+          MOD_N=$(echo "${MODIFIED_JSON}" | jq 'length')
+          REM_N=$(echo "${REMOVED_JSON}" | jq 'length')
+          TOTAL=$((ADD_N + MOD_N + REM_N))
+
+          PAYLOAD=$(jq -n \
+            --arg repo "$REPO_FULL" \
+            --arg app "$APP_SLUG" \
+            --arg branch "$BRANCH_REF" \
+            --arg sha "$HEAD_SHA" \
+            --arg short "$SHORT_SHA" \
+            --arg parent "$PARENT_SHA" \
+            --arg msg "$MSG" \
+            --arg an "$AUTHOR_NAME" \
+            --arg ae "$AUTHOR_EMAIL" \
+            --arg al "$ACTOR" \
+            --arg pushed "$PUSHED_AT" \
+            --arg compare "${COMPARE_URL:-}" \
+            --arg html "$HTML_URL" \
+            --arg run "$RUN_URL" \
+            --argjson added "$ADDED_JSON" \
+            --argjson modified "$MODIFIED_JSON" \
+            --argjson removed "$REMOVED_JSON" \
+            --argjson total "$TOTAL" \
+            '{
+              repo_full_name: $repo,
+              app_slug: $app,
+              branch: $branch,
+              commit_sha: $sha,
+              commit_sha_short: $short,
+              parent_sha: (if $parent == "" then null else $parent end),
+              commit_message: $msg,
+              author_name: $an,
+              author_email: $ae,
+              author_login: $al,
+              pushed_at: $pushed,
+              compare_url: (if $compare == "" then null else $compare end),
+              html_url: $html,
+              workflow_run_url: $run,
+              files: { added: $added, modified: $modified, removed: $removed },
+              stats: { additions: 0, deletions: 0, total: $total }
+            }')
+
+          curl -fsSL -X POST "${ACE_HUB_URL%/}/api/platform/git-pushes/ingest" \
+            -H "Content-Type: application/json" \
+            -H "X-ACE-Deploy-Token: ${ACE_GIT_PUSH_INGEST_TOKEN}" \
+            -d "${PAYLOAD}"
+
+          echo "Notified ACE Hub for ${REPO_FULL}@${SHORT_SHA} (${DIFF_RANGE})"
