@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAuth, userInitials } from "@/lib/auth";
 import { getHubAppsUrl } from "@/lib/hub";
+import { AceAppVersionFooter } from "@/components/AceAppVersionFooter";
 
 export default function HomePage() {
   const auth = useAuth();
@@ -100,9 +101,12 @@ export default function HomePage() {
       </main>
 
       <footer className="border-t border-border py-4 text-center">
-        <p className="text-xs text-muted-foreground" data-testid="text-app-version">
-          version 1.1
-        </p>
+        <AceAppVersionFooter
+          appSlug="imageflow"
+          displayName="ImageFlow"
+          fallbackVersion="1.1.0"
+          className="text-xs text-muted-foreground"
+        />
       </footer>
     </div>
   );
