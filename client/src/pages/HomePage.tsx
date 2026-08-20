@@ -6,6 +6,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAuth, userInitials } from "@/lib/auth";
 import { getHubAppsUrl } from "@/lib/hub";
 import { AceAppVersionFooter } from "@/components/AceAppVersionFooter";
+import { AceBacklogPanel } from "@/components/AceBacklogPanel";
 
 export default function HomePage() {
   const auth = useAuth();
@@ -99,6 +100,12 @@ export default function HomePage() {
           </TabsContent>
         </Tabs>
       </main>
+
+      <div className="mx-auto w-full max-w-7xl px-3 pb-4 sm:px-4 md:px-6">
+        <div className="rounded-lg border border-border p-4">
+          <AceBacklogPanel appSlug="imageflow" compact />
+        </div>
+      </div>
 
       <footer className="border-t border-border py-4 text-center">
         <AceAppVersionFooter
