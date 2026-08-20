@@ -8,6 +8,7 @@ import { getHubAppsUrl } from "@/lib/hub";
 import { AceAppVersionFooter } from "@/components/AceAppVersionFooter";
 import { AceBacklogPanel } from "@/components/AceBacklogPanel";
 import { AceDesignPanel } from "@/components/AceDesignPanel";
+import { AceUsageBeacon } from "@/components/AceUsageBeacon";
 
 export default function HomePage() {
   const auth = useAuth();
@@ -19,6 +20,7 @@ export default function HomePage() {
 
   return (
     <div className="flex min-h-screen flex-col bg-background">
+      <AceUsageBeacon appSlug="imageflow" />
       <header className="border-b border-border">
         <div className="mx-auto flex max-w-7xl items-center justify-between px-3 py-3 sm:px-4 sm:py-4 md:px-6">
           <a

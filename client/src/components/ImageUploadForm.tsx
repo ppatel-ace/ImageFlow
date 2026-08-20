@@ -17,6 +17,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
 import CustomCamera from "@/components/CustomCamera";
 import { shouldUseCustomCamera } from "@/lib/deviceDetection";
+import { trackFeature } from "@/components/AceUsageBeacon";
 
 // SharePoint-safe path segment (no trailing "." — e.g. "CACI TECHNOLOGIES, INC.")
 const sanitizePath = (value: string): string => {
@@ -286,6 +287,7 @@ export default function ImageUploadForm() {
     }
 
     setIsUploadingSharePoint(true);
+    trackFeature("imageflow.upload.sharepoint", "Upload to SharePoint");
     
     try {
       let uploadedCount = 0;
