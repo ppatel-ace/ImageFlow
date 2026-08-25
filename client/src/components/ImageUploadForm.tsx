@@ -17,6 +17,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
 import CustomCamera from "@/components/CustomCamera";
 import { shouldUseCustomCamera } from "@/lib/deviceDetection";
+import { saveImageToDevice } from "@/lib/saveImageToDevice";
 import { trackFeature } from "@/components/AceUsageBeacon";
 
 // SharePoint-safe path segment (no trailing "." — e.g. "CACI TECHNOLOGIES, INC.")
@@ -43,6 +44,7 @@ interface CapturedImage {
   file: File;
   preview: string;
   id: string;
+  source: "camera" | "gallery";
 }
 
 export default function ImageUploadForm() {
@@ -158,39 +160,52 @@ export default function ImageUploadForm() {
       .catch(() => setPartNumberOptions([]));
   }, [workOrderNumber, prevWorkOrder, form]);
 
+  const addCapturedImage = (file: File, source: "camera" | "gallery") => {
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      const newImage: CapturedImage = {
+        file,
+        preview: reader.result as string,
+        id: `${Date.now()}-${Math.random()}`,
+        source,
+      };
+      setCapturedImages((prev) => [...prev, newImage]);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const persistCameraImage = async (file: File) => {
+    const result = await saveImageToDevice(file);
+    if (!result.ok) {
+      toast({
+        title: "Device save failed",
+        description: result.error || "Could not save the photo to this device.",
+        variant: "destructive",
+      });
+    }
+  };
+
   const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
+    const source: "camera" | "gallery" =
+      e.target.id === "camera-input" ? "camera" : "gallery";
+
     if (files && files.length > 0) {
-      // Process each selected file
       Array.from(files).forEach((file) => {
-        const reader = new FileReader();
-        reader.onloadend = () => {
-          const newImage: CapturedImage = {
-            file: file,
-            preview: reader.result as string,
-            id: `${Date.now()}-${Math.random()}`
-          };
-          setCapturedImages(prev => [...prev, newImage]);
-        };
-        reader.readAsDataURL(file);
+        if (source === "camera") {
+          void persistCameraImage(file);
+        }
+        addCapturedImage(file, source);
       });
-      
+
       // Reset input value so same file can be selected again
-      e.target.value = '';
+      e.target.value = "";
     }
   };
 
   const handleCameraCapture = (file: File) => {
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      const newImage: CapturedImage = {
-        file: file,
-        preview: reader.result as string,
-        id: `${Date.now()}-${Math.random()}`
-      };
-      setCapturedImages(prev => [...prev, newImage]);
-    };
-    reader.readAsDataURL(file);
+    void persistCameraImage(file);
+    addCapturedImage(file, "camera");
   };
 
   const removeImage = (imageId: string) => {
