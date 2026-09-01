@@ -13,8 +13,25 @@ import { requireAceSsoApp, type AceAuthRequest } from "./aceSso";
 import { isDatabaseConfigured } from "./db";
 import { listUploadHistory, recordUploadHistory } from "./uploadHistory";
 
-const upload = multer({ storage: multer.memoryStorage() });
+const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: MAX_UPLOAD_BYTES },
+});
 const requireImageflow = requireAceSsoApp("imageflow");
+
+function acceptImageFile(req: AceAuthRequest, res: any, next: any) {
+  upload.single("imageFile")(req, res, (err: any) => {
+    if (err?.code === "LIMIT_FILE_SIZE") {
+      return res.status(413).json({
+        error: "File too large",
+        message: "Image must be 25 MB or smaller.",
+      });
+    }
+    if (err) return next(err);
+    next();
+  });
+}
 
 /** If WO cache is empty but SFTP is configured, pull Excel once before answering. */
 async function ensureWorkOrderDataLoaded(): Promise<void> {
@@ -107,14 +124,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post(
     "/api/upload/sharepoint",
     requireImageflow,
-    upload.single("imageFile"),
+    acceptImageFile,
     handleImageUpload,
   );
   // Alias — legacy client path kept for compatibility
   app.post(
     "/api/upload/gdrive",
     requireImageflow,
-    upload.single("imageFile"),
+    acceptImageFile,
     handleImageUpload,
   );
 

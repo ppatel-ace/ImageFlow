@@ -207,11 +207,25 @@ async function getAccessToken(): Promise<string> {
 
   applyClientCredential(params, tokenUrl, clientId);
 
-  const res = await fetch(tokenUrl, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: params,
-  });
+  const tokenController = new AbortController();
+  const tokenTimer = setTimeout(() => tokenController.abort(), 30_000);
+  let res: Response;
+  try {
+    res = await fetch(tokenUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: params,
+      signal: tokenController.signal,
+    });
+  } catch (err) {
+    const name = err && typeof err === "object" ? (err as { name?: string }).name : "";
+    if (name === "AbortError" || name === "TimeoutError") {
+      throw new Error("Azure token request timed out after 30000ms");
+    }
+    throw err;
+  } finally {
+    clearTimeout(tokenTimer);
+  }
 
   if (!res.ok) {
     const text = await res.text().catch(() => "");
@@ -233,18 +247,98 @@ async function getAccessToken(): Promise<string> {
   return tokenCache.accessToken;
 }
 
+type GraphRequestInit = RequestInit & { timeoutMs?: number };
+
+const METADATA_TIMEOUT_MS = 30_000;
+const CONTENT_TIMEOUT_MS = 120_000;
+const SIMPLE_UPLOAD_MAX_BYTES = 4 * 1024 * 1024;
+/** Graph upload-session chunks must be multiples of 320 KiB (except the last). */
+const UPLOAD_CHUNK_BYTES = 320 * 1024 * 16; // 5,242,880
+const MAX_GRAPH_ATTEMPTS = 3;
+
+const ensuredFolders = new Set<string>();
+
+function timeoutSignal(ms: number): AbortSignal {
+  if (typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function") {
+    return AbortSignal.timeout(ms);
+  }
+  const controller = new AbortController();
+  setTimeout(() => controller.abort(), ms);
+  return controller.signal;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isBinaryBody(body: BodyInit | null | undefined): boolean {
+  return (
+    typeof Buffer !== "undefined" &&
+    (body instanceof Buffer || body instanceof Uint8Array)
+  );
+}
+
+function isAbortError(err: unknown): boolean {
+  if (!err || typeof err !== "object") return false;
+  const name = (err as { name?: string }).name;
+  return name === "AbortError" || name === "TimeoutError";
+}
+
+function retryAfterMs(res: Response, attempt: number): number {
+  const raw = res.headers.get("Retry-After");
+  const parsed = raw ? Number.parseInt(raw, 10) : NaN;
+  if (Number.isFinite(parsed) && parsed >= 0) return Math.min(parsed * 1000, 15_000);
+  return Math.min(1000 * 2 ** (attempt - 1), 8_000);
+}
+
 async function graphFetch(
   path: string,
-  init: RequestInit = {},
+  init: GraphRequestInit = {},
 ): Promise<Response> {
+  const { timeoutMs = METADATA_TIMEOUT_MS, signal: userSignal, ...rest } = init;
   const token = await getAccessToken();
   const url = path.startsWith("http") ? path : `${GRAPH_BASE}${path}`;
-  const headers = new Headers(init.headers);
+  const headers = new Headers(rest.headers);
   headers.set("Authorization", `Bearer ${token}`);
-  if (!headers.has("Content-Type") && init.body && !(init.body instanceof Buffer)) {
+  if (!headers.has("Content-Type") && rest.body && !isBinaryBody(rest.body)) {
     headers.set("Content-Type", "application/json");
   }
-  return fetch(url, { ...init, headers });
+  const signal = userSignal ?? timeoutSignal(timeoutMs);
+  return fetch(url, { ...rest, headers, signal });
+}
+
+async function graphFetchWithRetry(
+  path: string,
+  init: GraphRequestInit = {},
+  maxAttempts = MAX_GRAPH_ATTEMPTS,
+): Promise<Response> {
+  let lastAbort: Error | null = null;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const res = await graphFetch(path, init);
+      if (res.status === 429 || res.status === 503) {
+        if (attempt === maxAttempts) return res;
+        const waitMs = retryAfterMs(res, attempt);
+        await res.text().catch(() => "");
+        await sleep(waitMs);
+        continue;
+      }
+      return res;
+    } catch (err) {
+      if (isAbortError(err) && attempt < maxAttempts) {
+        lastAbort = err instanceof Error ? err : new Error(String(err));
+        await sleep(1000 * attempt);
+        continue;
+      }
+      if (isAbortError(err)) {
+        throw new Error(
+          `SharePoint request timed out after ${init.timeoutMs ?? METADATA_TIMEOUT_MS}ms`,
+        );
+      }
+      throw err;
+    }
+  }
+  throw lastAbort ?? new Error("SharePoint request failed");
 }
 
 async function resolveSiteId(): Promise<string> {
@@ -253,7 +347,7 @@ async function resolveSiteId(): Promise<string> {
   const configured = process.env.SHAREPOINT_SITE_ID?.trim();
   if (configured) {
     // Validate the app can actually read this site
-    const res = await graphFetch(`/sites/${configured}`);
+    const res = await graphFetchWithRetry(`/sites/${configured}`);
     if (!res.ok) {
       const text = await res.text().catch(() => "");
       throw new Error(
@@ -273,7 +367,7 @@ async function resolveSiteId(): Promise<string> {
 
   // Graph: GET /sites/{hostname}:{server-relative-path}
   // Note: with Sites.Selected this call often 403s — set SHAREPOINT_SITE_ID instead.
-  const res = await graphFetch(
+  const res = await graphFetchWithRetry(
     `/sites/${encodeURIComponent(hostname)}:${normalizedPath}`,
   );
   if (!res.ok) {
@@ -305,7 +399,7 @@ async function resolveDriveId(siteId: string): Promise<string> {
     return cachedDriveId;
   }
 
-  const res = await graphFetch(`/sites/${siteId}/drive`);
+  const res = await graphFetchWithRetry(`/sites/${siteId}/drive`);
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     throw new Error(
@@ -324,6 +418,9 @@ function driveItemPath(segments: string[]): string {
 }
 
 async function ensureFolderPath(driveId: string, folderPath: string): Promise<void> {
+  const cacheKey = `${driveId}:${folderPath}`;
+  if (ensuredFolders.has(cacheKey)) return;
+
   const parts = folderPath.split("/").filter(Boolean);
   const built: string[] = [];
 
@@ -331,7 +428,9 @@ async function ensureFolderPath(driveId: string, folderPath: string): Promise<vo
     const parentSegments = [...built];
     built.push(part);
 
-    const probe = await graphFetch(`/drives/${driveId}/root:/${driveItemPath(built)}`);
+    const probe = await graphFetchWithRetry(
+      `/drives/${driveId}/root:/${driveItemPath(built)}`,
+    );
     if (probe.ok) continue;
     if (probe.status !== 404) {
       const text = await probe.text().catch(() => "");
@@ -346,7 +445,7 @@ async function ensureFolderPath(driveId: string, folderPath: string): Promise<vo
         ? `/drives/${driveId}/root/children`
         : `/drives/${driveId}/root:/${driveItemPath(parentSegments)}:/children`;
 
-    const createRes = await graphFetch(createUrl, {
+    const createRes = await graphFetchWithRetry(createUrl, {
       method: "POST",
       body: JSON.stringify({
         name: part,
@@ -363,6 +462,269 @@ async function ensureFolderPath(driveId: string, folderPath: string): Promise<vo
           sitesPermissionHint(createRes.status, text),
       );
     }
+  }
+
+  ensuredFolders.add(cacheKey);
+}
+
+type DriveItemInfo = { id: string; webUrl?: string };
+
+async function getDriveItemInfo(
+  driveId: string,
+  itemPath: string,
+): Promise<DriveItemInfo | null> {
+  const segments = itemPath.split("/").filter(Boolean);
+  const res = await graphFetchWithRetry(
+    `/drives/${driveId}/root:/${driveItemPath(segments)}`,
+  );
+  if (res.status === 404) {
+    await res.text().catch(() => "");
+    return null;
+  }
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(
+      `Failed to look up SharePoint item ${itemPath} (${res.status}): ${text.slice(0, 200)}` +
+        sitesPermissionHint(res.status, text),
+    );
+  }
+  const data = (await res.json()) as { id?: string; webUrl?: string };
+  if (!data.id) return null;
+  return { id: data.id, webUrl: data.webUrl };
+}
+
+function isBenignCheckinFailure(status: number, body: string): boolean {
+  if (status === 400 || status === 404 || status === 409) return true;
+  return /already checked in|not checked out|no checkout/i.test(body);
+}
+
+async function checkInDriveItem(
+  driveId: string,
+  itemId: string,
+  comment: string,
+): Promise<void> {
+  const res = await graphFetchWithRetry(`/drives/${driveId}/items/${itemId}/checkin`, {
+    method: "POST",
+    body: JSON.stringify({ comment, checkInAs: "published" }),
+  });
+  if (res.ok) return;
+  const text = await res.text().catch(() => "");
+  if (isBenignCheckinFailure(res.status, text)) return;
+  throw new Error(
+    `SharePoint check-in failed (${res.status}): ${text.slice(0, 200)}` +
+      sitesPermissionHint(res.status, text),
+  );
+}
+
+async function checkoutDriveItem(driveId: string, itemId: string): Promise<void> {
+  const res = await graphFetchWithRetry(`/drives/${driveId}/items/${itemId}/checkout`, {
+    method: "POST",
+  });
+  if (res.ok) return;
+  const text = await res.text().catch(() => "");
+  if (
+    res.status === 400 ||
+    res.status === 409 ||
+    /already checked out|checked.?out/i.test(text)
+  ) {
+    return;
+  }
+  throw new Error(
+    `SharePoint check-out failed (${res.status}): ${text.slice(0, 200)}` +
+      sitesPermissionHint(res.status, text),
+  );
+}
+
+async function prepareExistingItemForOverwrite(
+  driveId: string,
+  folderPath: string,
+  fileName: string,
+): Promise<string | null> {
+  const existing = await getDriveItemInfo(driveId, `${folderPath}/${fileName}`);
+  if (!existing?.id) return null;
+  await checkInDriveItem(
+    driveId,
+    existing.id,
+    `ImageFlow release before overwrite: ${fileName}`,
+  );
+  await checkoutDriveItem(driveId, existing.id);
+  return existing.id;
+}
+
+function lockedByOtherMessage(fileName: string, folderPath: string, detail: string): Error {
+  return new Error(
+    `SharePoint file "${folderPath}/${fileName}" is checked out by another user. ` +
+      `Open the file in SharePoint, Check In (or Discard Check Out), then try Upload again. ` +
+      `(${detail.slice(0, 200)})`,
+  );
+}
+
+async function putSimpleContent(
+  driveId: string,
+  folderPath: string,
+  fileName: string,
+  fileBuffer: Buffer,
+): Promise<DriveItemInfo> {
+  const uploadPath = `/drives/${driveId}/root:/${driveItemPath([
+    ...folderPath.split("/").filter(Boolean),
+    fileName,
+  ])}:/content`;
+
+  const uploadRes = await graphFetchWithRetry(uploadPath, {
+    method: "PUT",
+    headers: { "Content-Type": "application/octet-stream" },
+    body: fileBuffer,
+    timeoutMs: CONTENT_TIMEOUT_MS,
+  });
+
+  if (!uploadRes.ok) {
+    const text = await uploadRes.text().catch(() => "");
+    throw new Error(
+      `SharePoint upload failed (${uploadRes.status}): ${text.slice(0, 300)}` +
+        sitesPermissionHint(uploadRes.status, text),
+    );
+  }
+
+  const uploaded = (await uploadRes.json().catch(() => ({}))) as {
+    id?: string;
+    webUrl?: string;
+  };
+  if (uploaded.id) return { id: uploaded.id, webUrl: uploaded.webUrl };
+  const lookedUp = await getDriveItemInfo(driveId, `${folderPath}/${fileName}`);
+  if (lookedUp?.id) return lookedUp;
+  throw new Error(`SharePoint upload succeeded but returned no item id for ${fileName}`);
+}
+
+async function putSessionChunk(
+  uploadUrl: string,
+  chunk: Buffer,
+  offset: number,
+  total: number,
+): Promise<Response> {
+  const end = offset + chunk.length - 1;
+  let lastAbort: Error | null = null;
+  for (let attempt = 1; attempt <= MAX_GRAPH_ATTEMPTS; attempt++) {
+    try {
+      const res = await fetch(uploadUrl, {
+        method: "PUT",
+        headers: {
+          "Content-Length": String(chunk.length),
+          "Content-Range": `bytes ${offset}-${end}/${total}`,
+        },
+        body: chunk,
+        signal: timeoutSignal(CONTENT_TIMEOUT_MS),
+      });
+      if (res.status === 429 || res.status === 503) {
+        if (attempt === MAX_GRAPH_ATTEMPTS) return res;
+        const waitMs = retryAfterMs(res, attempt);
+        await res.text().catch(() => "");
+        await sleep(waitMs);
+        continue;
+      }
+      return res;
+    } catch (err) {
+      if (isAbortError(err) && attempt < MAX_GRAPH_ATTEMPTS) {
+        lastAbort = err instanceof Error ? err : new Error(String(err));
+        await sleep(1000 * attempt);
+        continue;
+      }
+      if (isAbortError(err)) {
+        throw new Error(
+          `SharePoint chunk upload timed out after ${CONTENT_TIMEOUT_MS}ms (bytes ${offset}-${end})`,
+        );
+      }
+      throw err;
+    }
+  }
+  throw lastAbort ?? new Error("SharePoint chunk upload failed");
+}
+
+async function putViaUploadSession(
+  driveId: string,
+  folderPath: string,
+  fileName: string,
+  fileBuffer: Buffer,
+): Promise<DriveItemInfo> {
+  const itemPath = driveItemPath([
+    ...folderPath.split("/").filter(Boolean),
+    fileName,
+  ]);
+  const sessionRes = await graphFetchWithRetry(
+    `/drives/${driveId}/root:/${itemPath}:/createUploadSession`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        item: {
+          "@microsoft.graph.conflictBehavior": "replace",
+          name: fileName,
+        },
+      }),
+    },
+  );
+  if (!sessionRes.ok) {
+    const text = await sessionRes.text().catch(() => "");
+    throw new Error(
+      `SharePoint upload session failed (${sessionRes.status}): ${text.slice(0, 300)}` +
+        sitesPermissionHint(sessionRes.status, text),
+    );
+  }
+  const session = (await sessionRes.json()) as { uploadUrl?: string };
+  if (!session.uploadUrl) {
+    throw new Error("SharePoint upload session missing uploadUrl");
+  }
+
+  let offset = 0;
+  let lastItem: DriveItemInfo | null = null;
+  while (offset < fileBuffer.length) {
+    const endExclusive = Math.min(offset + UPLOAD_CHUNK_BYTES, fileBuffer.length);
+    const chunk = fileBuffer.subarray(offset, endExclusive);
+    const chunkRes = await putSessionChunk(
+      session.uploadUrl,
+      chunk,
+      offset,
+      fileBuffer.length,
+    );
+    if (chunkRes.status === 200 || chunkRes.status === 201) {
+      const uploaded = (await chunkRes.json().catch(() => ({}))) as {
+        id?: string;
+        webUrl?: string;
+      };
+      if (uploaded.id) lastItem = { id: uploaded.id, webUrl: uploaded.webUrl };
+    } else if (chunkRes.status === 202) {
+      await chunkRes.text().catch(() => "");
+    } else {
+      const text = await chunkRes.text().catch(() => "");
+      throw new Error(
+        `SharePoint chunk upload failed (${chunkRes.status}) at byte ${offset}: ${text.slice(0, 300)}` +
+          sitesPermissionHint(chunkRes.status, text),
+      );
+    }
+    offset = endExclusive;
+  }
+
+  if (lastItem?.id) return lastItem;
+  const lookedUp = await getDriveItemInfo(driveId, `${folderPath}/${fileName}`);
+  if (lookedUp?.id) return lookedUp;
+  throw new Error(`SharePoint upload session finished but item ${fileName} was not found`);
+}
+
+async function putFileContent(
+  driveId: string,
+  folderPath: string,
+  fileName: string,
+  fileBuffer: Buffer,
+): Promise<DriveItemInfo> {
+  if (fileBuffer.length >= SIMPLE_UPLOAD_MAX_BYTES) {
+    return putViaUploadSession(driveId, folderPath, fileName, fileBuffer);
+  }
+  try {
+    return await putSimpleContent(driveId, folderPath, fileName, fileBuffer);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (/413|too large|max.*size|Request Entity Too Large/i.test(msg)) {
+      return putViaUploadSession(driveId, folderPath, fileName, fileBuffer);
+    }
+    throw err;
   }
 }
 
@@ -383,45 +745,45 @@ export async function uploadFileToSharePoint(
   const folderPath = `${sanitizedDept}/${sanitizedCustomer}/${sanitizedWo}`;
 
   await ensureFolderPath(driveId, folderPath);
+  await prepareExistingItemForOverwrite(driveId, folderPath, sanitizedFile);
 
-  const uploadPath = `/drives/${driveId}/root:/${driveItemPath([
-    ...folderPath.split("/").filter(Boolean),
-    sanitizedFile,
-  ])}:/content`;
-
-  const uploadRes = await graphFetch(uploadPath, {
-    method: "PUT",
-    headers: { "Content-Type": "application/octet-stream" },
-    body: fileBuffer,
-  });
-
-  if (!uploadRes.ok) {
-    const text = await uploadRes.text().catch(() => "");
-    throw new Error(
-      `SharePoint upload failed (${uploadRes.status}): ${text.slice(0, 300)}` +
-        sitesPermissionHint(uploadRes.status, text),
-    );
-  }
-
-  const uploaded = (await uploadRes.json().catch(() => ({}))) as {
-    id?: string;
-    webUrl?: string;
-  };
-
-  // Library has "Require Check Out" — app uploads stay checked out to SharePoint App
-  // and invisible to users until checked in.
-  if (uploaded.id) {
-    const checkinRes = await graphFetch(`/drives/${driveId}/items/${uploaded.id}/checkin`, {
-      method: "POST",
-      body: JSON.stringify({ comment: "ImageFlow upload" }),
-    });
-    if (!checkinRes.ok) {
-      const text = await checkinRes.text().catch(() => "");
+  let uploaded: DriveItemInfo;
+  try {
+    uploaded = await putFileContent(driveId, folderPath, sanitizedFile, fileBuffer);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (/423|resourceLocked|resourceCheckedOut|checked-out by another/i.test(msg)) {
       console.warn(
-        `SharePoint check-in failed for ${sanitizedFile} (${checkinRes.status}): ${text.slice(0, 200)}`,
+        `[sharepoint] PUT locked for "${sanitizedFile}", retrying after check-in/check-out`,
       );
+      await prepareExistingItemForOverwrite(driveId, folderPath, sanitizedFile);
+      try {
+        uploaded = await putFileContent(driveId, folderPath, sanitizedFile, fileBuffer);
+      } catch (retryErr) {
+        const retryMsg = retryErr instanceof Error ? retryErr.message : String(retryErr);
+        if (/423|resourceLocked|resourceCheckedOut|checked-out by another/i.test(retryMsg)) {
+          throw lockedByOtherMessage(sanitizedFile, folderPath, retryMsg);
+        }
+        throw retryErr;
+      }
+    } else {
+      throw err;
     }
   }
+
+  if (!uploaded.id) {
+    const lookedUp = await getDriveItemInfo(driveId, `${folderPath}/${sanitizedFile}`);
+    if (!lookedUp?.id) {
+      throw new Error(
+        `SharePoint upload of ${sanitizedFile} did not return an item id; cannot check in`,
+      );
+    }
+    uploaded = lookedUp;
+  }
+
+  // Require Check Out libraries leave Graph PUTs checked out to the app identity
+  // until check-in — fail the upload if the file would stay invisible in Documents.
+  await checkInDriveItem(driveId, uploaded.id, `ImageFlow upload: ${sanitizedFile}`);
 
   return {
     success: true,

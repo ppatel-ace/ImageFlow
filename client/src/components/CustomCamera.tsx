@@ -209,7 +209,7 @@ export default function CustomCamera({ onCapture, onClose }: CustomCameraProps) 
           setCaptureResult(imageUrl, file);
           console.log("Photo captured using canvas fallback");
         }
-      }, "image/jpeg", 1.0); // Max quality for fallback too
+      }, "image/jpeg", 0.85);
     };
 
     // Helper to wrap a promise with a timeout, marks capture as cancelled on timeout
@@ -289,7 +289,7 @@ export default function CustomCamera({ onCapture, onClose }: CustomCameraProps) 
           // Convert to blob
           const convertToBlob = () => {
             if (processingCanvas instanceof OffscreenCanvas) {
-              processingCanvas.convertToBlob({ type: "image/jpeg", quality: 0.95 })
+              processingCanvas.convertToBlob({ type: "image/jpeg", quality: 0.85 })
                 .then((adjustedBlob) => {
                   const timestamp = Date.now();
                   const file = new File([adjustedBlob], `photo-${timestamp}.jpg`, {
@@ -311,7 +311,7 @@ export default function CustomCamera({ onCapture, onClose }: CustomCameraProps) 
                 } else {
                   reject(new Error("Canvas toBlob failed"));
                 }
-              }, "image/jpeg", 0.95);
+              }, "image/jpeg", 0.85);
             }
           };
           
@@ -335,7 +335,7 @@ export default function CustomCamera({ onCapture, onClose }: CustomCameraProps) 
         
         // Settings optimized for sharp document/label photos
         let photoSettings: any = {
-          imageQuality: 1.0 // No compression - maximum quality
+          imageQuality: 0.85
         };
         
         try {
