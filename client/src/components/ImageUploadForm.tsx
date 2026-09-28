@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -18,8 +18,21 @@ import { cn } from "@/lib/utils";
 import CustomCamera from "@/components/CustomCamera";
 import { shouldUseCustomCamera } from "@/lib/deviceDetection";
 import { saveImageToDevice } from "@/lib/saveImageToDevice";
-import { compressImageForUpload } from "@/lib/compressImage";
+import { prepareImageForUpload } from "@/lib/compressImage";
 import { trackFeature } from "@/components/AceUsageBeacon";
+import UploadQueuePanel from "@/components/UploadQueuePanel";
+import { useUploadQueue } from "@/hooks/use-upload-queue";
+import {
+  enqueuePhotos,
+  listPhotos,
+  newPhotoId,
+  removePhoto,
+  removePhotos,
+  saveDraft,
+  updatePhoto,
+  type QueuedPhoto,
+  type UploadMeta,
+} from "@/lib/uploadQueue";
 
 // SharePoint-safe path segment (no trailing "." — e.g. "CACI TECHNOLOGIES, INC.")
 const sanitizePath = (value: string): string => {
@@ -42,16 +55,22 @@ const uploadFormSchema = z.object({
 type UploadFormData = z.infer<typeof uploadFormSchema>;
 
 interface CapturedImage {
-  file: File;
-  preview: string;
   id: string;
+  /** Full-resolution original; in memory only (used by Save Locally), not persisted. */
+  original: Blob | null;
+  /** Compressed upload blob; null while still preparing. */
+  blob: Blob | null;
+  thumb: Blob | null;
+  preview: string;
+  ext: string;
   source: "camera" | "gallery";
   capturedAt: string;
   nameStem: string;
   nameLocked: boolean;
+  sizeBytes: number;
+  compressMs: number;
+  preparing: boolean;
 }
-
-const CLIENT_UPLOAD_TIMEOUT_MS = 180_000;
 
 let lastCaptureMs = 0;
 
@@ -66,12 +85,62 @@ function buildDefaultStem(part: string, rev: string, capturedAt: string): string
   return `${sanitizePath(part || "image")}Rev${sanitizePath(rev || "0")}-${capturedAt}`;
 }
 
-function fileExtension(file: File): string {
-  const fromName = file.name.split(".").pop();
-  if (fromName && fromName !== file.name) return fromName.toLowerCase();
+function fileExtension(file: Blob): string {
+  const name = file instanceof File ? file.name : "";
+  const fromName = name.split(".").pop();
+  if (fromName && fromName !== name) return fromName.toLowerCase();
   if (file.type === "image/png") return "png";
   if (file.type === "image/webp") return "webp";
   return "jpg";
+}
+
+function capturedToRecord(
+  img: CapturedImage,
+  status: QueuedPhoto["status"],
+  meta: UploadMeta | null = null,
+): QueuedPhoto {
+  const now = Date.now();
+  return {
+    id: img.id,
+    status,
+    blob: img.blob,
+    thumb: img.thumb,
+    ext: img.ext,
+    source: img.source,
+    capturedAt: img.capturedAt,
+    nameStem: img.nameStem,
+    nameLocked: img.nameLocked,
+    sizeBytes: img.sizeBytes,
+    compressMs: img.compressMs,
+    meta,
+    attempts: 0,
+    lastError: null,
+    serverFailed: false,
+    nextAttemptAt: now,
+    queuedAt: status === "queued" ? now : null,
+    createdAt: now,
+    updatedAt: now,
+    webUrl: null,
+  };
+}
+
+function draftToCaptured(p: QueuedPhoto): CapturedImage {
+  const source = p.thumb ?? p.blob;
+  return {
+    id: p.id,
+    original: null,
+    blob: p.blob,
+    thumb: p.thumb,
+    preview: source ? URL.createObjectURL(source) : "",
+    ext: p.ext,
+    source: p.source,
+    capturedAt: p.capturedAt,
+    nameStem: p.nameStem,
+    nameLocked: p.nameLocked,
+    sizeBytes: p.sizeBytes,
+    compressMs: p.compressMs,
+    preparing: false,
+  };
 }
 
 function uniquifyStems(images: CapturedImage[]): Record<string, string> {
@@ -99,11 +168,10 @@ export default function ImageUploadForm() {
   const [isSavingLocal, setIsSavingLocal] = useState(false);
   const [isUploadingSharePoint, setIsUploadingSharePoint] = useState(false);
   const [sharePointSuccess, setSharePointSuccess] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState<{
-    current: number;
-    total: number;
-    name: string;
-  } | null>(null);
+  const previewUrlsRef = useRef<Set<string>>(new Set());
+  const removedIdsRef = useRef<Set<string>>(new Set());
+  const imagesRef = useRef<CapturedImage[]>(capturedImages);
+  imagesRef.current = capturedImages;
   const [partNumberOptions, setPartNumberOptions] = useState<{ partNumber: string; rev: string; customerName: string }[]>([]);
   const [workOrderOpen, setWorkOrderOpen] = useState(false);
   const [workOrderSearch, setWorkOrderSearch] = useState("");
@@ -212,23 +280,99 @@ export default function ImageUploadForm() {
       .catch(() => setPartNumberOptions([]));
   }, [workOrderNumber, prevWorkOrder, form]);
 
+  const trackPreview = (url: string) => {
+    if (url) previewUrlsRef.current.add(url);
+    return url;
+  };
+
+  const releasePreview = (url: string) => {
+    if (url && previewUrlsRef.current.delete(url)) URL.revokeObjectURL(url);
+  };
+
+  // Restore photos captured before a refresh / SSO redirect / app kill.
+  useEffect(() => {
+    let cancelled = false;
+    listPhotos()
+      .then((all) => {
+        if (cancelled) return;
+        const drafts = all.filter((p) => p.status === "draft");
+        if (drafts.length === 0) return;
+        const restored = drafts.map((p) => {
+          const img = draftToCaptured(p);
+          trackPreview(img.preview);
+          return img;
+        });
+        setCapturedImages((prev) => {
+          const known = new Set(prev.map((i) => i.id));
+          return [...prev, ...restored.filter((i) => !known.has(i.id))];
+        });
+      })
+      .catch((err) => console.warn("[uploadQueue] draft restore failed:", err));
+    const urls = previewUrlsRef.current;
+    return () => {
+      cancelled = true;
+      urls.forEach((u) => URL.revokeObjectURL(u));
+      urls.clear();
+    };
+  }, []);
+
   const addCapturedImage = (file: File, source: "camera" | "gallery") => {
     const capturedAt = nextCapturedAt();
     const nameStem = buildDefaultStem(partNumber, rev, capturedAt);
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      const newImage: CapturedImage = {
-        file,
-        preview: reader.result as string,
-        id: `${Date.now()}-${Math.random()}`,
-        source,
-        capturedAt,
-        nameStem,
-        nameLocked: false,
-      };
-      setCapturedImages((prev) => [...prev, newImage]);
+    const id = newPhotoId();
+    const placeholder: CapturedImage = {
+      id,
+      original: file,
+      blob: null,
+      thumb: null,
+      preview: trackPreview(URL.createObjectURL(file)),
+      ext: fileExtension(file),
+      source,
+      capturedAt,
+      nameStem,
+      nameLocked: false,
+      sizeBytes: file.size,
+      compressMs: 0,
+      preparing: true,
     };
-    reader.readAsDataURL(file);
+    setCapturedImages((prev) => [...prev, placeholder]);
+
+    void (async () => {
+      const prepared = await prepareImageForUpload(file);
+      if (removedIdsRef.current.has(id)) return;
+      const ext = prepared.blob === file ? fileExtension(file) : "jpg";
+      const current = imagesRef.current.find((img) => img.id === id) ?? placeholder;
+      const ready: CapturedImage = {
+        ...current,
+        blob: prepared.blob,
+        thumb: prepared.thumb,
+        ext,
+        sizeBytes: prepared.blob.size,
+        compressMs: Math.round(prepared.compressMs),
+        preparing: false,
+      };
+      try {
+        await saveDraft(capturedToRecord(ready, "draft"));
+      } catch (err) {
+        console.error("[uploadQueue] could not persist photo:", err);
+        toast({
+          title: "Photo not saved on device",
+          description: "Storage is full or unavailable. Upload this photo before closing the app.",
+          variant: "destructive",
+        });
+      }
+      if (removedIdsRef.current.has(id)) {
+        void removePhoto(id);
+        return;
+      }
+      setCapturedImages((prev) =>
+        prev.map((img) =>
+          img.id === id
+            ? { ...ready, nameStem: img.nameStem, nameLocked: img.nameLocked }
+            : img,
+        ),
+      );
+    })();
   };
 
   const persistCameraImage = async (file: File) => {
@@ -265,9 +409,39 @@ export default function ImageUploadForm() {
     addCapturedImage(file, "camera");
   };
 
-  const removeImage = (imageId: string) => {
-    setCapturedImages(prev => prev.filter(img => img.id !== imageId));
+  const discardImages = (images: CapturedImage[]) => {
+    for (const img of images) {
+      removedIdsRef.current.add(img.id);
+      releasePreview(img.preview);
+    }
+    void removePhotos(images.map((img) => img.id)).catch(() => {});
   };
+
+  const removeImage = (imageId: string) => {
+    const target = capturedImages.find((img) => img.id === imageId);
+    if (target) discardImages([target]);
+    setCapturedImages((prev) => prev.filter((img) => img.id !== imageId));
+  };
+
+  const clearAllImages = () => {
+    discardImages(capturedImages);
+    setCapturedImages([]);
+  };
+
+  // Keep persisted drafts' names in sync so edits survive a refresh.
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      for (const img of capturedImages) {
+        if (img.preparing) continue;
+        void updatePhoto(
+          img.id,
+          { nameStem: img.nameStem, nameLocked: img.nameLocked },
+          false,
+        ).catch(() => {});
+      }
+    }, 400);
+    return () => window.clearTimeout(timer);
+  }, [capturedImages]);
 
   const updateImageStem = (imageId: string, value: string) => {
     setCapturedImages((prev) =>
@@ -325,13 +499,15 @@ export default function ImageUploadForm() {
           .then((h: any) => h.getDirectoryHandle(workOrderNumber, { create: true }));
         
         for (const image of capturedImages) {
-          const ext = fileExtension(image.file);
+          const data = image.original ?? image.blob;
+          if (!data) continue;
+          const ext = image.original ? fileExtension(image.original) : image.ext;
           const fileHandle = await folderHandle.getFileHandle(
             generateFilename(stems[image.id], ext),
             { create: true },
           );
           const writable = await fileHandle.createWritable();
-          await writable.write(image.file);
+          await writable.write(data);
           await writable.close();
         }
         
@@ -341,8 +517,10 @@ export default function ImageUploadForm() {
         });
       } else {
         for (const image of capturedImages) {
-          const ext = fileExtension(image.file);
-          const url = URL.createObjectURL(image.file);
+          const data = image.original ?? image.blob;
+          if (!data) continue;
+          const ext = image.original ? fileExtension(image.original) : image.ext;
+          const url = URL.createObjectURL(data);
           const a = Object.assign(document.createElement('a'), {
             href: url,
             download: generateFilename(stems[image.id], ext)
@@ -359,7 +537,7 @@ export default function ImageUploadForm() {
         });
       }
       
-      setCapturedImages([]);
+      clearAllImages();
     } catch (error) {
       if ((error as Error).name === 'AbortError') {
         // User cancelled the directory picker
@@ -390,124 +568,63 @@ export default function ImageUploadForm() {
       return;
     }
 
-    setIsUploadingSharePoint(true);
-    setUploadProgress(null);
-    trackFeature("imageflow.upload.sharepoint", "Upload to SharePoint");
-    
-    try {
-      let uploadedCount = 0;
-      let lastErrorMessage = "";
-      let authErrorEncountered = false;
-      const stems = uniquifyStems(capturedImages);
-      const failedImages: CapturedImage[] = [];
-
-      for (let i = 0; i < capturedImages.length; i++) {
-        const image = capturedImages[i];
-        const imageName = stems[image.id];
-        setUploadProgress({
-          current: i + 1,
-          total: capturedImages.length,
-          name: imageName,
-        });
-
-        const compressed = await compressImageForUpload(image.file);
-        const ext = fileExtension(compressed);
-
-        const formData = new FormData();
-        formData.append("imageFile", compressed);
-        formData.append("customerName", customerName);
-        formData.append("dept", dept);
-        formData.append("workOrderNumber", workOrderNumber);
-        formData.append("imageName", imageName);
-        formData.append("partNumber", partNumber);
-        formData.append("rev", rev || "");
-
-        const controller = new AbortController();
-        const timeoutId = window.setTimeout(() => controller.abort(), CLIENT_UPLOAD_TIMEOUT_MS);
-
-        try {
-          const response = await fetch("/api/upload/sharepoint", {
-            method: "POST",
-            body: formData,
-            credentials: "include",
-            signal: controller.signal,
-          });
-
-          const result = await response.json().catch(() => ({} as any));
-
-          if (response.ok) {
-            uploadedCount++;
-            continue;
-          }
-
-          if (response.status === 401 && result?.ssoLoginUrl) {
-            window.location.assign(result.ssoLoginUrl);
-            return;
-          }
-
-          lastErrorMessage = result?.message || result?.error || `HTTP ${response.status}`;
-          failedImages.push(image);
-          if (result?.requiresAuth) {
-            authErrorEncountered = true;
-            failedImages.push(...capturedImages.slice(i + 1));
-            break;
-          }
-        } catch (err: any) {
-          if (err?.name === "AbortError") {
-            lastErrorMessage = `Upload timed out after ${Math.round(CLIENT_UPLOAD_TIMEOUT_MS / 60000)} minutes. Check the network and try again.`;
-          } else {
-            lastErrorMessage = "Could not reach the server. Please check your internet connection.";
-          }
-          console.error(`Image ${i + 1} upload failed:`, err?.message);
-          failedImages.push(image);
-        } finally {
-          window.clearTimeout(timeoutId);
-        }
-      }
-
-      setCapturedImages(failedImages);
-
-      if (uploadedCount > 0) {
-        toast({
-          title: "Upload Successful",
-          description: failedImages.length
-            ? `${uploadedCount} of ${capturedImages.length} image(s) uploaded to SharePoint. ${failedImages.length} remaining.`
-            : `${uploadedCount} of ${capturedImages.length} image(s) uploaded to SharePoint`,
-        });
-        queryClient.invalidateQueries({ queryKey: ["upload-history"] });
-        if (failedImages.length === 0) {
-          setSharePointSuccess(true);
-          setTimeout(() => {
-            setSharePointSuccess(false);
-          }, 2000);
-        }
-      } else if (authErrorEncountered) {
-        toast({
-          title: "SharePoint Not Configured",
-          description:
-            lastErrorMessage ||
-            "SharePoint / Azure Graph credentials are missing or invalid. Contact IT.",
-          variant: "destructive",
-        });
-      } else {
-        toast({
-          title: "Upload Failed",
-          description: lastErrorMessage || "Could not upload any images.",
-          variant: "destructive",
-        });
-      }
-    } catch (error: any) {
-      console.error("SharePoint upload error:", error);
+    if (capturedImages.some((img) => img.preparing || !img.blob)) {
       toast({
-        title: "Upload Failed",
-        description: error?.message || "An error occurred while uploading to SharePoint.",
+        title: "Still preparing photos",
+        description: "Wait a moment for the photos to finish processing, then tap Upload again.",
+      });
+      return;
+    }
+
+    setIsUploadingSharePoint(true);
+    trackFeature("imageflow.upload.sharepoint", "Upload to SharePoint");
+
+    try {
+      const stems = uniquifyStems(capturedImages);
+      const records = capturedImages.map((img) =>
+        capturedToRecord(img, "queued", {
+          dept,
+          customerName,
+          workOrderNumber,
+          partNumber,
+          rev: rev || "",
+          imageName: stems[img.id],
+        }),
+      );
+      await enqueuePhotos(records);
+
+      const count = capturedImages.length;
+      for (const img of capturedImages) releasePreview(img.preview);
+      setCapturedImages([]);
+
+      toast({
+        title: `${count} photo${count === 1 ? "" : "s"} queued`,
+        description: navigator.onLine
+          ? "Uploading in the background — track progress in the Upload Queue. You can start the next work order."
+          : "You're offline. Photos are saved on this device and will upload automatically when the connection returns.",
+      });
+      setSharePointSuccess(true);
+      setTimeout(() => setSharePointSuccess(false), 2000);
+    } catch (error: any) {
+      console.error("Queue upload error:", error);
+      toast({
+        title: "Could not queue photos",
+        description:
+          error?.message ||
+          "Device storage is unavailable. Try again, or use Save Locally as a backup.",
         variant: "destructive",
       });
     } finally {
       setIsUploadingSharePoint(false);
-      setUploadProgress(null);
     }
   };
+
+  // Refresh history when queued photos land in SharePoint.
+  const queueItems = useUploadQueue();
+  const doneCount = queueItems.filter((p) => p.status === "done").length;
+  useEffect(() => {
+    if (doneCount > 0) queryClient.invalidateQueries({ queryKey: ["upload-history"] });
+  }, [doneCount, queryClient]);
 
   const handleCheckUpdates = async (isAutoCheck: boolean = false, checkType: 'pageLoad' | 'scheduled' | 'manual' = 'manual') => {
     setIsCheckingUpdates(true);
@@ -1093,7 +1210,7 @@ export default function ImageUploadForm() {
                   type="button"
                   variant="ghost"
                   size="sm"
-                  onClick={() => setCapturedImages([])}
+                  onClick={clearAllImages}
                   disabled={isUploadingSharePoint}
                   data-testid="button-clear-all-images"
                 >
@@ -1104,7 +1221,15 @@ export default function ImageUploadForm() {
                 {capturedImages.map((image, index) => (
                   <div key={image.id} className="relative group space-y-2">
                     <div className="relative aspect-square bg-muted rounded-lg overflow-hidden">
-                      <img src={image.preview} alt={`Captured ${index + 1}`} className="w-full h-full object-cover" />
+                      {image.preview ? (
+                        <img src={image.preview} alt={`Captured ${index + 1}`} className="w-full h-full object-cover" />
+                      ) : null}
+                      {image.preparing ? (
+                        <div className="absolute bottom-1 left-1 flex items-center gap-1 rounded bg-black/60 px-1.5 py-0.5 text-xs text-white">
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                          Preparing
+                        </div>
+                      ) : null}
                       <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
                         <Button
                           type="button"
@@ -1137,24 +1262,22 @@ export default function ImageUploadForm() {
                           data-testid={`input-image-name-${index}`}
                         />
                         <span className="text-sm text-muted-foreground shrink-0">
-                          .{fileExtension(image.file)}
+                          .{image.ext}
                         </span>
                       </div>
                     </div>
                     <p className="text-xs text-muted-foreground truncate">
-                      {(image.file.size / 1024).toFixed(1)} KB
+                      {(image.sizeBytes / 1024).toFixed(1)} KB
+                      {image.preparing ? "" : " · saved on device"}
                     </p>
                   </div>
                 ))}
               </div>
-              {uploadProgress && (
-                <p className="text-sm font-medium text-foreground" data-testid="text-upload-progress">
-                  Uploading {uploadProgress.current} of {uploadProgress.total} — {uploadProgress.name}
-                </p>
-              )}
             </div>
           </Card>
         )}
+
+        <UploadQueuePanel />
 
         {(customerName || dept || workOrderNumber) && (
           <Card className="p-4 sm:p-6 bg-accent/50">
@@ -1183,7 +1306,7 @@ export default function ImageUploadForm() {
                 rev: "",
                 customerName: "",
               });
-              setCapturedImages([]);
+              clearAllImages();
             }}
             disabled={isSavingLocal || isUploadingSharePoint}
             data-testid="button-clear"
@@ -1224,14 +1347,12 @@ export default function ImageUploadForm() {
           {isUploadingSharePoint ? (
             <>
               <Loader2 className="w-5 h-5 mr-2 animate-spin" />
-              {uploadProgress
-                ? `Uploading ${uploadProgress.current} of ${uploadProgress.total}`
-                : "Uploading..."}
+              Queuing...
             </>
           ) : sharePointSuccess ? (
             <>
               <CheckCircle2 className="w-5 h-5 mr-2" />
-              Success!
+              Queued!
             </>
           ) : (
             <>

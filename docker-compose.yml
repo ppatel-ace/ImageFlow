@@ -18,6 +18,10 @@ services:
       APP_URL: ${APP_URL:-https://image.aceelectronics.com}
       APP_DOMAIN: ${APP_DOMAIN:-aceelectronics.com}
       DATABASE_URL: ${DATABASE_URL:-}
+      # Upload staging queue (imageflow_upload_jobs) worker + stats access
+      IMAGEFLOW_ADMIN_EMAILS: ${IMAGEFLOW_ADMIN_EMAILS:-}
+      IMAGEFLOW_UPLOAD_CONCURRENCY: ${IMAGEFLOW_UPLOAD_CONCURRENCY:-3}
+      IMAGEFLOW_UPLOAD_WORKER: ${IMAGEFLOW_UPLOAD_WORKER:-true}
       AZURE_TENANT_ID: ${AZURE_TENANT_ID:-}
       AZURE_CLIENT_ID: ${AZURE_CLIENT_ID:-}
       AZURE_CLIENT_SECRET: ${AZURE_CLIENT_SECRET:-}

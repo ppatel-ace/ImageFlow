@@ -422,6 +422,17 @@ async function ensureFolderPath(driveId: string, folderPath: string): Promise<vo
   if (ensuredFolders.has(cacheKey)) return;
 
   const parts = folderPath.split("/").filter(Boolean);
+
+  const leafProbe = await graphFetchWithRetry(
+    `/drives/${driveId}/root:/${driveItemPath(parts)}`,
+  );
+  if (leafProbe.ok) {
+    await leafProbe.text().catch(() => "");
+    ensuredFolders.add(cacheKey);
+    return;
+  }
+  await leafProbe.text().catch(() => "");
+
   const built: string[] = [];
 
   for (const part of parts) {
@@ -728,15 +739,42 @@ async function putFileContent(
   }
 }
 
+export type SharePointUploadTimings = {
+  tokenMs: number;
+  siteMs: number;
+  folderMs: number;
+  putMs: number;
+  checkinMs: number;
+  totalMs: number;
+  lockedRetry: boolean;
+};
+
 export async function uploadFileToSharePoint(
   customerName: string,
   dept: string,
   workOrderNumber: string,
   fileName: string,
   fileBuffer: Buffer,
-): Promise<{ success: true; path: string; webUrl?: string }> {
+): Promise<{
+  success: true;
+  path: string;
+  webUrl?: string;
+  timings: SharePointUploadTimings;
+}> {
+  const startedAt = Date.now();
+  let mark = startedAt;
+  const lap = () => {
+    const now = Date.now();
+    const ms = now - mark;
+    mark = now;
+    return ms;
+  };
+
+  await getAccessToken();
+  const tokenMs = lap();
   const siteId = await resolveSiteId();
   const driveId = await resolveDriveId(siteId);
+  const siteMs = lap();
 
   const sanitizedCustomer = sanitizePathSegment(customerName);
   const sanitizedDept = sanitizePathSegment(dept);
@@ -745,14 +783,18 @@ export async function uploadFileToSharePoint(
   const folderPath = `${sanitizedDept}/${sanitizedCustomer}/${sanitizedWo}`;
 
   await ensureFolderPath(driveId, folderPath);
-  await prepareExistingItemForOverwrite(driveId, folderPath, sanitizedFile);
+  const folderMs = lap();
 
+  // Filenames are timestamped, so the item is usually new: upload first and only
+  // run the check-in/check-out dance when Graph reports the existing item is locked.
+  let lockedRetry = false;
   let uploaded: DriveItemInfo;
   try {
     uploaded = await putFileContent(driveId, folderPath, sanitizedFile, fileBuffer);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     if (/423|resourceLocked|resourceCheckedOut|checked-out by another/i.test(msg)) {
+      lockedRetry = true;
       console.warn(
         `[sharepoint] PUT locked for "${sanitizedFile}", retrying after check-in/check-out`,
       );
@@ -780,15 +822,26 @@ export async function uploadFileToSharePoint(
     }
     uploaded = lookedUp;
   }
+  const putMs = lap();
 
   // Require Check Out libraries leave Graph PUTs checked out to the app identity
   // until check-in — fail the upload if the file would stay invisible in Documents.
   await checkInDriveItem(driveId, uploaded.id, `ImageFlow upload: ${sanitizedFile}`);
+  const checkinMs = lap();
 
   return {
     success: true,
     path: `${folderPath}/${sanitizedFile}`,
     webUrl: uploaded.webUrl,
+    timings: {
+      tokenMs,
+      siteMs,
+      folderMs,
+      putMs,
+      checkinMs,
+      totalMs: Date.now() - startedAt,
+      lockedRetry,
+    },
   };
 }
 

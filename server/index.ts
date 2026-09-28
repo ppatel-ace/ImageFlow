@@ -7,6 +7,7 @@ import { initializeScheduler } from "./scheduler";
 import { registerAceSsoRoutes, requireAceSsoSpa } from "./aceSso";
 import { getSftpEnvStatus } from "./sftpImport";
 import { getSharePointEnvStatus } from "./sharepoint";
+import { getUploadWorkerStatus, startUploadWorker } from "./uploadWorker";
 import path from "path";
 import fs from "fs";
 import { fileURLToPath } from "url";
@@ -46,6 +47,7 @@ app.get("/health", (_req, res) => {
       enableFlag: sftp.enableFlag,
     },
     sharepoint: sp,
+    uploadWorker: getUploadWorkerStatus(),
   });
 });
 
@@ -156,6 +158,7 @@ app.use((req, res, next) => {
       );
 
       initializeScheduler();
+      startUploadWorker();
     },
   );
 })();

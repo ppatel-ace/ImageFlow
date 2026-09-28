@@ -1,4 +1,6 @@
+import { useEffect } from "react";
 import ImageUploadForm from "@/components/ImageUploadForm";
+import { startUploadRunner } from "@/lib/uploadQueue";
 import UploadHistoryPanel from "@/components/UploadHistoryPanel";
 import ThemeToggle from "@/components/ThemeToggle";
 import { Button } from "@/components/ui/button";
@@ -13,6 +15,14 @@ import { AceUsageBeacon } from "@/components/AceUsageBeacon";
 export default function HomePage() {
   const auth = useAuth();
   const user = auth.status === "authenticated" ? auth.user : null;
+
+  useEffect(
+    () =>
+      startUploadRunner({
+        onAuthRequired: (loginUrl) => window.location.assign(loginUrl),
+      }),
+    [],
+  );
 
   const handleLogout = async () => {
     await auth.logout();

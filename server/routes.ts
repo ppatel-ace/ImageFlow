@@ -12,6 +12,122 @@ import {
 import { requireAceSsoApp, type AceAuthRequest } from "./aceSso";
 import { isDatabaseConfigured } from "./db";
 import { listUploadHistory, recordUploadHistory } from "./uploadHistory";
+import {
+  getUploadJobStatuses,
+  getUploadStats,
+  retryUploadJob,
+  stageUploadJob,
+} from "./uploadJobs";
+import { getUploadWorkerStatus, kickUploadWorker } from "./uploadWorker";
+
+const JOB_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const MAX_STATUS_IDS = 100;
+
+function userIdOf(req: AceAuthRequest): string | null {
+  const user = req.aceSsoUser;
+  return user?.id || user?.sub || null;
+}
+
+/** Upload stats admins: SSO group containing "admin" or email in IMAGEFLOW_ADMIN_EMAILS. */
+function isImageflowAdmin(req: AceAuthRequest): boolean {
+  const user = req.aceSsoUser;
+  if (!user) return false;
+  if (user.id === "local-dev") return true;
+  const allow = (process.env.IMAGEFLOW_ADMIN_EMAILS || "")
+    .split(",")
+    .map((e) => e.trim().toLowerCase())
+    .filter(Boolean);
+  if (user.email && allow.includes(user.email.toLowerCase())) return true;
+  return (user.groups || []).some((g) => /admin/i.test(g));
+}
+
+function parseClientInfo(req: AceAuthRequest): Record<string, unknown> | null {
+  const info: Record<string, unknown> = {};
+  const device = req.get("x-imageflow-device");
+  if (device) info.device = device.slice(0, 40);
+  const raw = req.get("x-imageflow-client-ms");
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === "object") {
+        for (const [k, v] of Object.entries(parsed)) {
+          if (typeof v === "number" && Number.isFinite(v)) info[k] = Math.round(v);
+        }
+      }
+    } catch {
+      /* ignore malformed telemetry */
+    }
+  }
+  return Object.keys(info).length ? info : null;
+}
+
+function markRequestStart(req: any, _res: any, next: any) {
+  req.imageflowStartedAt = Date.now();
+  next();
+}
+
+async function handleStageJob(req: AceAuthRequest & { imageflowStartedAt?: number }, res: any) {
+  if (!isDatabaseConfigured()) {
+    return res.status(503).json({
+      error: "Staging queue unavailable",
+      message: "DATABASE_URL is not configured; use the direct upload route.",
+      fallback: "sync",
+    });
+  }
+  if (!req.file) {
+    return res.status(400).json({ error: "No file uploaded" });
+  }
+  if (!/^image\//i.test(req.file.mimetype || "")) {
+    return res.status(400).json({ error: "Only image files can be uploaded" });
+  }
+
+  const { jobId, customerName, dept, workOrderNumber, imageName, partNumber, rev } = req.body;
+  if (!jobId || !JOB_ID_RE.test(String(jobId))) {
+    return res.status(400).json({ error: "Missing or invalid jobId" });
+  }
+  if (!customerName || !dept || !workOrderNumber || !imageName) {
+    return res.status(400).json({ error: "Missing required fields" });
+  }
+
+  const userId = userIdOf(req);
+  if (!userId) return res.status(401).json({ error: "Not authenticated" });
+  const user = req.aceSsoUser!;
+
+  const extension = (req.file.originalname.split(".").pop() || "jpg").replace(/[^a-z0-9]/gi, "") || "jpg";
+  const fileName = `${String(imageName)}.${extension}`;
+
+  try {
+    const staged = await stageUploadJob({
+      id: String(jobId).toLowerCase(),
+      bytes: req.file.buffer,
+      contentType: req.file.mimetype,
+      fileName,
+      dept: String(dept),
+      customerName: String(customerName),
+      workOrderNumber: String(workOrderNumber),
+      partNumber: String(partNumber ?? ""),
+      rev: String(rev ?? ""),
+      userId,
+      userEmail: user.email || "unknown",
+      userName: user.name || user.email || "Unknown User",
+      clientInfo: parseClientInfo(req),
+      receivedMs: Date.now() - (req.imageflowStartedAt ?? Date.now()),
+    });
+    if (staged.ownerId !== userId) {
+      return res.status(409).json({ error: "Job id already used" });
+    }
+    if (staged.created) {
+      console.log(
+        `[upload] staged ${JSON.stringify({ id: staged.row.id, bytes: req.file.size, receivedMs: Date.now() - (req.imageflowStartedAt ?? Date.now()) })}`,
+      );
+      kickUploadWorker();
+    }
+    res.status(202).json(staged.row);
+  } catch (error: any) {
+    console.error("[upload] stage failed:", error);
+    res.status(500).json({ error: "Could not stage upload", message: error?.message || String(error) });
+  }
+}
 
 const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
 const upload = multer({
@@ -134,6 +250,62 @@ export async function registerRoutes(app: Express): Promise<Server> {
     acceptImageFile,
     handleImageUpload,
   );
+
+  app.post(
+    "/api/upload/jobs",
+    markRequestStart,
+    requireImageflow,
+    acceptImageFile,
+    handleStageJob,
+  );
+
+  app.get("/api/upload/jobs", requireImageflow, async (req: AceAuthRequest, res) => {
+    const userId = userIdOf(req);
+    if (!userId) return res.status(401).json({ error: "Not authenticated" });
+    if (!isDatabaseConfigured()) return res.json({ items: [], databaseConfigured: false });
+    const ids = String(req.query.ids || "")
+      .split(",")
+      .map((s) => s.trim().toLowerCase())
+      .filter((s) => JOB_ID_RE.test(s))
+      .slice(0, MAX_STATUS_IDS);
+    try {
+      const items = await getUploadJobStatuses(userId, ids);
+      res.json({ items, databaseConfigured: true });
+    } catch (error: any) {
+      console.error("[upload] status lookup failed:", error);
+      res.status(500).json({ error: "Status lookup failed", message: error?.message || String(error) });
+    }
+  });
+
+  app.post("/api/upload/jobs/:id/retry", requireImageflow, async (req: AceAuthRequest, res) => {
+    const userId = userIdOf(req);
+    if (!userId) return res.status(401).json({ error: "Not authenticated" });
+    const id = String(req.params.id || "").toLowerCase();
+    if (!JOB_ID_RE.test(id)) return res.status(400).json({ error: "Invalid job id" });
+    if (!isDatabaseConfigured()) return res.status(503).json({ error: "Staging queue unavailable" });
+    try {
+      const row = await retryUploadJob(userId, id);
+      if (!row) return res.status(404).json({ error: "Job not found or not retryable" });
+      kickUploadWorker();
+      res.json(row);
+    } catch (error: any) {
+      console.error("[upload] retry failed:", error);
+      res.status(500).json({ error: "Retry failed", message: error?.message || String(error) });
+    }
+  });
+
+  app.get("/api/upload/stats", requireImageflow, async (req: AceAuthRequest, res) => {
+    if (!isImageflowAdmin(req)) return res.status(403).json({ error: "Admin only" });
+    if (!isDatabaseConfigured()) return res.status(503).json({ error: "DATABASE_URL not set" });
+    const days = Math.min(Math.max(Number(req.query.days) || 7, 1), 90);
+    try {
+      const stats = await getUploadStats(days);
+      res.json({ ...stats, worker: getUploadWorkerStatus() });
+    } catch (error: any) {
+      console.error("[upload] stats failed:", error);
+      res.status(500).json({ error: "Stats failed", message: error?.message || String(error) });
+    }
+  });
 
   app.get("/api/upload-history", requireImageflow, async (req: AceAuthRequest, res) => {
     try {

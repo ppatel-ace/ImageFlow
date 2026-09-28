@@ -24,16 +24,81 @@ export function getDb() {
     pool = new Pool({
       connectionString: process.env.DATABASE_URL!.trim(),
       ssl: process.env.DATABASE_SSL === "true" ? { rejectUnauthorized: false } : undefined,
-      max: 5,
+      max: 8,
     });
     db = drizzle(pool, { schema });
   }
   return db!;
 }
 
-function getPool(): pg.Pool {
+export function getPool(): pg.Pool {
   getDb();
   return pool!;
+}
+
+let ensureJobsPromise: Promise<void> | null = null;
+
+/** Create imageflow_upload_jobs (staging queue) under an advisory lock; idempotent. */
+export async function ensureUploadJobsTable(): Promise<void> {
+  if (!isDatabaseConfigured()) return;
+  if (!ensureJobsPromise) {
+    ensureJobsPromise = (async () => {
+      const client = await getPool().connect();
+      try {
+        await client.query("SELECT pg_advisory_lock($1)", [874203152]);
+        try {
+          if (!(await tableExists(client, "imageflow_upload_jobs"))) {
+            await client.query(`
+              CREATE TABLE imageflow_upload_jobs (
+                id text PRIMARY KEY,
+                status text NOT NULL DEFAULT 'staged',
+                attempts integer NOT NULL DEFAULT 0,
+                next_attempt_at timestamptz NOT NULL DEFAULT now(),
+                locked_until timestamptz,
+                last_error text,
+                bytes bytea,
+                content_type text NOT NULL,
+                size_bytes integer NOT NULL,
+                sha256 text NOT NULL,
+                file_name text NOT NULL,
+                dept text NOT NULL,
+                customer_name text NOT NULL,
+                work_order_number text NOT NULL,
+                part_number text NOT NULL DEFAULT '',
+                rev text NOT NULL DEFAULT '',
+                user_id text NOT NULL,
+                user_email text NOT NULL,
+                user_name text NOT NULL,
+                sharepoint_path text,
+                web_url text,
+                client_info jsonb,
+                received_ms integer,
+                graph_ms integer,
+                graph_timings jsonb,
+                created_at timestamptz NOT NULL DEFAULT now(),
+                updated_at timestamptz NOT NULL DEFAULT now(),
+                completed_at timestamptz
+              )
+            `);
+          }
+          await client.query(`
+            CREATE INDEX IF NOT EXISTS imageflow_upload_jobs_status_next_idx
+              ON imageflow_upload_jobs (status, next_attempt_at);
+            CREATE INDEX IF NOT EXISTS imageflow_upload_jobs_user_idx
+              ON imageflow_upload_jobs (user_id);
+          `);
+        } finally {
+          await client.query("SELECT pg_advisory_unlock($1)", [874203152]);
+        }
+      } finally {
+        client.release();
+      }
+    })().catch((err) => {
+      ensureJobsPromise = null;
+      throw err;
+    });
+  }
+  await ensureJobsPromise;
 }
 
 async function tableExists(client: pg.PoolClient, tableName: string): Promise<boolean> {
