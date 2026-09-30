@@ -11,6 +11,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { useAuth } from "@/lib/auth";
+import { trackFeature } from "@/components/AceUsageBeacon";
 
 type UploadHistoryItem = {
   id: string;
@@ -97,6 +98,7 @@ function HistoryTable({
                   target="_blank"
                   rel="noreferrer"
                   className="text-primary underline-offset-2 hover:underline"
+                  onClick={() => trackFeature("imageflow.history.open_folder", "Open SharePoint folder")}
                 >
                   {row.folderPath}
                 </a>

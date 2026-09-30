@@ -4,7 +4,8 @@ loadEnvFile();
 import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { initializeScheduler } from "./scheduler";
-import { registerAceSsoRoutes, requireAceSsoSpa } from "./aceSso";
+import { registerAceSsoRoutes, requireAceSsoSpa, type AceAuthRequest } from "./aceSso";
+import { createActivityAudit } from "./activityAudit";
 import { getSftpEnvStatus } from "./sftpImport";
 import { getSharePointEnvStatus } from "./sharepoint";
 import { getUploadWorkerStatus, startUploadWorker } from "./uploadWorker";
@@ -82,6 +83,28 @@ app.use((req, res, next) => {
 
   next();
 });
+
+// Identity must match ace-auth's login event (ssoUserId = SSO sub). Excel checks are auto-polled
+// and job retries replay queued uploads; handleStageJob flags idempotent re-posts of an existing job.
+app.use(
+  createActivityAudit({
+    appSlug: "imageflow",
+    getIdentity: (req) => {
+      const user = req.aceSsoUser as AceAuthRequest["aceSsoUser"];
+      if (!user || user.id === "local-dev") return null;
+      return {
+        email: user.email,
+        ssoUserId: user.sub || user.id,
+        employeeId: user.employeeId ?? null,
+        displayName: user.name,
+      };
+    },
+    skip: (req, apiPath) =>
+      req.imageflowAuditSkip === true ||
+      /\/retry$/i.test(apiPath) ||
+      /\/check-excel-updates$/i.test(apiPath),
+  }),
+);
 
 (async () => {
   const server = await registerRoutes(app);

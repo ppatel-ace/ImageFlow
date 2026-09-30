@@ -488,6 +488,7 @@ export default function ImageUploadForm() {
     }
 
     setIsSavingLocal(true);
+    trackFeature("imageflow.save_local", "Save photos locally");
     const sanitizedCustomerName = sanitizePath(customerName);
     const stems = uniquifyStems(capturedImages);
     
@@ -813,7 +814,10 @@ export default function ImageUploadForm() {
               variant="outline"
               size="lg"
               className="min-h-12 sm:min-h-14"
-              onClick={() => handleCheckUpdates(false)}
+              onClick={() => {
+                trackFeature("imageflow.excel.check_updates", "Check for work-order updates");
+                void handleCheckUpdates(false);
+              }}
               disabled={isCheckingUpdates}
               data-testid="button-check-updates"
             >
@@ -1162,7 +1166,10 @@ export default function ImageUploadForm() {
                     variant="outline"
                     size="lg"
                     className="w-full sm:flex-1 min-h-12 sm:min-h-14"
-                    onClick={() => setShowCustomCamera(true)}
+                    onClick={() => {
+                      trackFeature("imageflow.camera.open", "Open camera");
+                      setShowCustomCamera(true);
+                    }}
                     disabled={!workOrderMatches}
                     data-testid="button-camera"
                   >

@@ -121,6 +121,9 @@ async function handleStageJob(req: AceAuthRequest & { imageflowStartedAt?: numbe
         `[upload] staged ${JSON.stringify({ id: staged.row.id, bytes: req.file.size, receivedMs: Date.now() - (req.imageflowStartedAt ?? Date.now()) })}`,
       );
       kickUploadWorker();
+      res.locals.auditRecord = { type: "upload", id: staged.row.id, label: fileName };
+    } else {
+      (req as AceAuthRequest & { imageflowAuditSkip?: boolean }).imageflowAuditSkip = true;
     }
     res.status(202).json(staged.row);
   } catch (error: any) {
@@ -207,6 +210,7 @@ async function handleImageUpload(req: AceAuthRequest, res: any) {
       console.warn("[uploadHistory] failed to record:", histErr?.message || histErr);
     }
 
+    res.locals.auditRecord = { type: "upload", label: fileName };
     res.json(result);
   } catch (error: any) {
     console.error("SharePoint upload error:", error);

@@ -17,6 +17,9 @@ services:
       SSO_LOGIN_URL: ${SSO_LOGIN_URL:-https://sso.aceelectronics.com}
       APP_URL: ${APP_URL:-https://image.aceelectronics.com}
       APP_DOMAIN: ${APP_DOMAIN:-aceelectronics.com}
+      # Hub session activity audit (ADR-031) — server-only
+      PLATFORM_INGEST_URL: ${PLATFORM_INGEST_URL:-}
+      PLATFORM_AUDIT_INGEST_SECRET: ${PLATFORM_AUDIT_INGEST_SECRET:-}
       DATABASE_URL: ${DATABASE_URL:-}
       # Upload staging queue (imageflow_upload_jobs) worker + stats access
       IMAGEFLOW_ADMIN_EMAILS: ${IMAGEFLOW_ADMIN_EMAILS:-}

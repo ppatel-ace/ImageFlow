@@ -10,7 +10,7 @@ import { getHubAppsUrl } from "@/lib/hub";
 import { AceAppVersionFooter } from "@/components/AceAppVersionFooter";
 import { AceBacklogPanel } from "@/components/AceBacklogPanel";
 import { AceDesignPanel } from "@/components/AceDesignPanel";
-import { AceUsageBeacon } from "@/components/AceUsageBeacon";
+import { trackFeature } from "@/components/AceUsageBeacon";
 
 export default function HomePage() {
   const auth = useAuth();
@@ -30,7 +30,6 @@ export default function HomePage() {
 
   return (
     <div className="flex min-h-screen flex-col bg-background">
-      <AceUsageBeacon appSlug="imageflow" />
       <header className="border-b border-border">
         <div className="mx-auto flex max-w-7xl items-center justify-between px-3 py-3 sm:px-4 sm:py-4 md:px-6">
           <a
@@ -96,7 +95,13 @@ export default function HomePage() {
       </header>
 
       <main className="flex-1 py-4 sm:py-6 md:py-8">
-        <Tabs defaultValue="upload" className="mx-auto max-w-7xl px-3 sm:px-4 md:px-6">
+        <Tabs
+          defaultValue="upload"
+          className="mx-auto max-w-7xl px-3 sm:px-4 md:px-6"
+          onValueChange={(tab) => {
+            if (tab === "history") trackFeature("imageflow.history.view", "View upload history");
+          }}
+        >
           <TabsList className="mb-4 grid w-full grid-cols-2 sm:inline-flex sm:w-auto">
             <TabsTrigger value="upload" data-testid="tab-upload">
               Upload
