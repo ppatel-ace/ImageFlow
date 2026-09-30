@@ -1,8 +1,9 @@
 /**
  * ACE usage beacon (ADR-023): page_view, named feature, api_error (5xx/network).
  * Hub SPA: mode "session" → POST /api/platform/usage-events/session (cookie).
- * Spokes: mode "ingest" → POST /api/platform/usage-events with X-Platform-Ingest-Secret
- *   (VITE_PLATFORM_INGEST_URL + VITE_PLATFORM_INGEST_SECRET; fail silent if unset).
+ * Spokes: mode "relay" → POST same-origin /api/usage-events; the spoke server (createUsageRelay)
+ *   stamps identity from its session and forwards to the Hub. No secret in the browser.
+ * Legacy mode "ingest" (cross-origin + VITE secret) is blocked by CORS — do not use.
  */
 
 export type UsageIdentity = {
@@ -16,8 +17,12 @@ export type UsageBeaconOptions = {
   appSlug: string;
   /** Absolute Hub origin, e.g. https://aceerp.aceelectronics.com — or "" for same-origin Hub */
   hubBaseUrl?: string;
-  mode?: "session" | "ingest";
+  mode?: "session" | "ingest" | "relay";
   ingestSecret?: string;
+  /** Relay endpoint on the spoke's own server (default "/api/usage-events"). */
+  relayUrl?: string;
+  /** Extra headers for the relay call, e.g. a bearer token when auth is not cookie-based. */
+  relayHeaders?: () => Record<string, string> | null | undefined;
   getIdentity?: () => UsageIdentity | null | undefined;
 };
 
@@ -97,21 +102,33 @@ async function flush() {
   const mode = opts.mode || (opts.ingestSecret ? "ingest" : "session");
   const origin = hubOrigin();
   const url =
-    mode === "session"
-      ? `${origin}/api/platform/usage-events/session`
-      : `${origin}/api/platform/usage-events`;
+    mode === "relay"
+      ? opts.relayUrl || "/api/usage-events"
+      : mode === "session"
+        ? `${origin}/api/platform/usage-events/session`
+        : `${origin}/api/platform/usage-events`;
 
   if (mode === "ingest" && !opts.ingestSecret) return;
+
+  let extraHeaders: Record<string, string> = {};
+  if (mode === "relay") {
+    try {
+      extraHeaders = opts.relayHeaders?.() || {};
+    } catch {
+      extraHeaders = {};
+    }
+  }
 
   try {
     await fetch(url, {
       method: "POST",
-      credentials: mode === "session" ? "include" : "omit",
+      credentials: mode === "session" ? "include" : mode === "relay" ? "same-origin" : "omit",
       headers: {
         "Content-Type": "application/json",
         ...(mode === "ingest" && opts.ingestSecret
           ? { "X-Platform-Ingest-Secret": opts.ingestSecret }
           : {}),
+        ...extraHeaders,
       },
       body: JSON.stringify({ events: batch }),
       keepalive: true,
@@ -164,6 +181,7 @@ function patchFetch() {
             : input instanceof URL
               ? input.toString()
               : input.url;
+        if (url.includes("/usage-events")) return res;
         enqueue({
           eventType: "api_error",
           httpMethod: (init?.method || "GET").toUpperCase(),
@@ -180,6 +198,7 @@ function patchFetch() {
           : input instanceof URL
             ? input.toString()
             : (input as Request).url;
+      if (url.includes("/usage-events")) throw err;
       enqueue({
         eventType: "api_error",
         httpMethod: (init?.method || "GET").toUpperCase(),

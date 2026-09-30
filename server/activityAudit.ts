@@ -5,6 +5,7 @@
  * Spokes: set PLATFORM_INGEST_URL + PLATFORM_AUDIT_INGEST_SECRET (server env only, never VITE_*).
  * Mount once, before the API router:  app.use(createActivityAudit({ appSlug: "crm" }))
  * Handlers may set `res.locals.auditRecord = { type, id, label }` for friendlier labels.
+ * Browser page views: mount createUsageRelay() at POST /api/usage-events (beacon mode "relay").
  *
  * Canonical copy lives in ace-platform/shared/activityAudit.ts; spokes keep a verbatim copy.
  */
@@ -196,7 +197,7 @@ function clientIp(req: AnyReq): string | null {
   return req.ip?.trim() || null;
 }
 
-function httpSink(): ((events: AuditEvent[]) => Promise<unknown>) | null {
+function httpSink<T>(): ((events: T[]) => Promise<unknown>) | null {
   const base = process.env.PLATFORM_INGEST_URL?.trim();
   const secret = process.env.PLATFORM_AUDIT_INGEST_SECRET?.trim();
   if (!base || !secret) return null;
@@ -209,10 +210,8 @@ function httpSink(): ((events: AuditEvent[]) => Promise<unknown>) | null {
     });
 }
 
-export function createActivityAudit(options: ActivityAuditOptions) {
-  const sink = options.sink ?? httpSink();
-  const getIdentity = options.getIdentity ?? defaultAuditIdentity;
-  let queue: AuditEvent[] = [];
+function createBatcher<T>(sink: ((events: T[]) => Promise<unknown>) | null) {
+  let queue: T[] = [];
   let timer: ReturnType<typeof setTimeout> | null = null;
 
   const flush = () => {
@@ -228,12 +227,18 @@ export function createActivityAudit(options: ActivityAuditOptions) {
     }
   };
 
-  const enqueue = (ev: AuditEvent) => {
+  return (ev: T) => {
     if (queue.length > 500) return;
     queue.push(ev);
     if (queue.length >= 50) flush();
     else if (!timer) timer = setTimeout(flush, 2000);
   };
+}
+
+export function createActivityAudit(options: ActivityAuditOptions) {
+  const sink = options.sink ?? httpSink<AuditEvent>();
+  const getIdentity = options.getIdentity ?? defaultAuditIdentity;
+  const enqueue = createBatcher(sink);
 
   return function activityAudit(rawReq: unknown, rawRes: unknown, next: Next) {
     const req = rawReq as AnyReq;
@@ -302,5 +307,94 @@ export function createActivityAudit(options: ActivityAuditOptions) {
     });
 
     next();
+  };
+}
+
+export type RelayedUsageEvent = {
+  appSlug: string;
+  eventType: "page_view" | "feature" | "api_error";
+  sessionId: string | null;
+  path: string | null;
+  featureKey: string | null;
+  featureLabel: string | null;
+  httpMethod: string | null;
+  httpStatus: number | null;
+  apiPath: string | null;
+  email: string | null;
+  displayName: string | null;
+  ssoUserId: string | null;
+  employeeId: string | null;
+  ipAddress: string | null;
+  userAgent: string | null;
+  metadata: Record<string, unknown>;
+};
+
+export type UsageRelayOptions = {
+  appSlug: string;
+  /** Other slugs the browser may report for this server (e.g. Inventory → ["po-search"]). */
+  allowedAppSlugs?: string[];
+  getIdentity?: (req: AnyReq) => AuditIdentity | null | undefined;
+  sink?: (events: RelayedUsageEvent[]) => Promise<unknown>;
+};
+
+const RELAY_EVENT_TYPES = new Set(["page_view", "feature", "api_error"]);
+
+/**
+ * Same-origin relay for the browser usage beacon (mode "relay"). Identity is taken from the
+ * server session — browser-supplied identity is ignored — and events are forwarded to the Hub
+ * with the server-only audit secret. Mount after body parsing and auth, e.g.
+ *   app.post("/api/usage-events", createUsageRelay({ appSlug: "crm" }))
+ * The path must match DEFAULT_SKIP (`/usage-events`) so the audit does not log it as a write.
+ */
+export function createUsageRelay(options: UsageRelayOptions) {
+  const sink = options.sink ?? httpSink<RelayedUsageEvent>();
+  const getIdentity = options.getIdentity ?? defaultAuditIdentity;
+  const enqueue = createBatcher(sink);
+  const allowed = new Set([options.appSlug, ...(options.allowedAppSlugs ?? [])]);
+
+  return function usageRelay(rawReq: unknown, rawRes: unknown) {
+    const req = rawReq as AnyReq & { body?: unknown };
+    const res = rawRes as { status: (code: number) => { end: () => unknown } };
+    try {
+      const identity = sink ? getIdentity(req) : null;
+      if (identity && (identity.email || identity.ssoUserId || identity.employeeId)) {
+        const events = pick(req.body, "events");
+        const list = Array.isArray(events) ? events.slice(0, 50) : [];
+        for (const raw of list) {
+          if (!raw || typeof raw !== "object") continue;
+          const ev = raw as Record<string, unknown>;
+          const eventType = String(ev.eventType ?? "");
+          if (!RELAY_EVENT_TYPES.has(eventType)) continue;
+          const slug = str(ev.appSlug, 60)?.toLowerCase();
+          const status = Number(ev.httpStatus);
+          const metadata =
+            ev.metadata && typeof ev.metadata === "object" && !Array.isArray(ev.metadata) &&
+            JSON.stringify(ev.metadata).length <= 2000
+              ? (ev.metadata as Record<string, unknown>)
+              : {};
+          enqueue({
+            appSlug: slug && allowed.has(slug) ? slug : options.appSlug,
+            eventType: eventType as RelayedUsageEvent["eventType"],
+            sessionId: str(ev.sessionId, 80),
+            path: str(ev.path, 500),
+            featureKey: str(ev.featureKey, 120),
+            featureLabel: str(ev.featureLabel, 200),
+            httpMethod: str(ev.httpMethod, 16),
+            httpStatus: ev.httpStatus != null && Number.isFinite(status) ? status : null,
+            apiPath: str(ev.apiPath, 500),
+            email: str(identity.email, 320),
+            displayName: str(identity.displayName, 200),
+            ssoUserId: str(identity.ssoUserId, 120),
+            employeeId: str(identity.employeeId, 60),
+            ipAddress: clientIp(req),
+            userAgent: str(req.headers["user-agent"], 500),
+            metadata,
+          });
+        }
+      }
+    } catch {
+      /* fail silent — tracking must never affect the app */
+    }
+    res.status(204).end();
   };
 }

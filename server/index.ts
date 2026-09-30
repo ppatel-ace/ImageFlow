@@ -4,8 +4,8 @@ loadEnvFile();
 import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { initializeScheduler } from "./scheduler";
-import { registerAceSsoRoutes, requireAceSsoSpa, type AceAuthRequest } from "./aceSso";
-import { createActivityAudit } from "./activityAudit";
+import { registerAceSsoRoutes, requireAceSsoApp, requireAceSsoSpa, type AceAuthRequest } from "./aceSso";
+import { createActivityAudit, createUsageRelay } from "./activityAudit";
 import { getSftpEnvStatus } from "./sftpImport";
 import { getSharePointEnvStatus } from "./sharepoint";
 import { getUploadWorkerStatus, startUploadWorker } from "./uploadWorker";
@@ -86,24 +86,31 @@ app.use((req, res, next) => {
 
 // Identity must match ace-auth's login event (ssoUserId = SSO sub). Excel checks are auto-polled
 // and job retries replay queued uploads; handleStageJob flags idempotent re-posts of an existing job.
+const ssoAuditIdentity = (req: Record<string, unknown>) => {
+  const user = req.aceSsoUser as AceAuthRequest["aceSsoUser"];
+  if (!user || user.id === "local-dev") return null;
+  return {
+    email: user.email,
+    ssoUserId: user.sub || user.id,
+    employeeId: user.employeeId ?? null,
+    displayName: user.name,
+  };
+};
 app.use(
   createActivityAudit({
     appSlug: "imageflow",
-    getIdentity: (req) => {
-      const user = req.aceSsoUser as AceAuthRequest["aceSsoUser"];
-      if (!user || user.id === "local-dev") return null;
-      return {
-        email: user.email,
-        ssoUserId: user.sub || user.id,
-        employeeId: user.employeeId ?? null,
-        displayName: user.name,
-      };
-    },
+    getIdentity: ssoAuditIdentity,
     skip: (req, apiPath) =>
       req.imageflowAuditSkip === true ||
       /\/retry$/i.test(apiPath) ||
       /\/check-excel-updates$/i.test(apiPath),
   }),
+);
+
+app.post(
+  "/api/usage-events",
+  requireAceSsoApp("imageflow"),
+  createUsageRelay({ appSlug: "imageflow", getIdentity: ssoAuditIdentity }),
 );
 
 (async () => {
