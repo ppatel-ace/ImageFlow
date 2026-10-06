@@ -109,10 +109,18 @@ function cookieDomainOptions(): { domain?: string } {
   return isLocal ? {} : { domain: `.${domain}` };
 }
 
+// COOKIE_SECURE=false is for plain-HTTP staging (e.g. http://192.2.150.2:6095) only;
+// browsers drop Secure cookies over HTTP, which loops the SSO redirect.
+function useSecureCookies(): boolean {
+  if (process.env.COOKIE_SECURE === "true") return true;
+  if (process.env.COOKIE_SECURE === "false") return false;
+  return process.env.NODE_ENV === "production";
+}
+
 function setAceSsoCookie(res: Response, token: string): void {
   res.cookie(SSO_COOKIE, token, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
+    secure: useSecureCookies(),
     sameSite: "lax",
     path: "/",
     // Persist across browser reloads for the JWT lifetime (session cookies can
@@ -125,7 +133,7 @@ function setAceSsoCookie(res: Response, token: string): void {
 export function clearAceSsoCookie(res: Response): void {
   res.cookie(SSO_COOKIE, "", {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
+    secure: useSecureCookies(),
     sameSite: "lax",
     path: "/",
     maxAge: 0,
