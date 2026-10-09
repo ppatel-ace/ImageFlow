@@ -29,6 +29,7 @@ import {
   removePhoto,
   removePhotos,
   saveDraft,
+  describeStorageProblem,
   updatePhoto,
   type QueuedPhoto,
   type UploadMeta,
@@ -104,7 +105,7 @@ function capturedToRecord(
     id: img.id,
     status,
     blob: img.blob,
-    thumb: img.thumb,
+    thumb: img.thumb && img.thumb !== img.blob ? img.thumb : null,
     ext: img.ext,
     source: img.source,
     capturedAt: img.capturedAt,
@@ -170,6 +171,7 @@ export default function ImageUploadForm() {
   const [sharePointSuccess, setSharePointSuccess] = useState(false);
   const previewUrlsRef = useRef<Set<string>>(new Set());
   const removedIdsRef = useRef<Set<string>>(new Set());
+  const storageWarnedRef = useRef(false);
   const imagesRef = useRef<CapturedImage[]>(capturedImages);
   imagesRef.current = capturedImages;
   const [partNumberOptions, setPartNumberOptions] = useState<{ partNumber: string; rev: string; customerName: string }[]>([]);
@@ -351,13 +353,12 @@ export default function ImageUploadForm() {
         compressMs: Math.round(prepared.compressMs),
         preparing: false,
       };
-      try {
-        await saveDraft(capturedToRecord(ready, "draft"));
-      } catch (err) {
-        console.error("[uploadQueue] could not persist photo:", err);
+      const persisted = await saveDraft(capturedToRecord(ready, "draft"));
+      if (!persisted && !storageWarnedRef.current) {
+        storageWarnedRef.current = true;
         toast({
-          title: "Photo not saved on device",
-          description: "Storage is full or unavailable. Upload this photo before closing the app.",
+          title: "Photos kept in memory only",
+          description: `${describeStorageProblem()} You can still upload — keep this page open until the photos show "Sent to server".`,
           variant: "destructive",
         });
       }
@@ -592,7 +593,7 @@ export default function ImageUploadForm() {
           imageName: stems[img.id],
         }),
       );
-      await enqueuePhotos(records);
+      const persisted = await enqueuePhotos(records);
 
       const count = capturedImages.length;
       for (const img of capturedImages) releasePreview(img.preview);
@@ -600,9 +601,12 @@ export default function ImageUploadForm() {
 
       toast({
         title: `${count} photo${count === 1 ? "" : "s"} queued`,
-        description: navigator.onLine
-          ? "Sending now — keep this page open until the Upload Queue shows \"Sent to server\" (a few seconds). You can start the next work order."
-          : "You're offline. Photos are saved on this device and will upload automatically when the connection returns.",
+        description: !persisted
+          ? "Sending from memory — this device's browser storage isn't available, so keep this page open until the Upload Queue shows \"Sent to server\"."
+          : navigator.onLine
+            ? "Sending now — keep this page open until the Upload Queue shows \"Sent to server\" (a few seconds). You can start the next work order."
+            : "You're offline. Photos are saved on this device and will upload automatically when the connection returns.",
+        ...(persisted ? {} : { variant: "destructive" as const }),
       });
       setSharePointSuccess(true);
       setTimeout(() => setSharePointSuccess(false), 2000);
@@ -610,9 +614,7 @@ export default function ImageUploadForm() {
       console.error("Queue upload error:", error);
       toast({
         title: "Could not queue photos",
-        description:
-          error?.message ||
-          "Device storage is unavailable. Try again, or use Save Locally as a backup.",
+        description: `${error?.message || "Unexpected error"}. Your photos are still on screen — tap Upload again, or use Save Locally as a backup.`,
         variant: "destructive",
       });
     } finally {

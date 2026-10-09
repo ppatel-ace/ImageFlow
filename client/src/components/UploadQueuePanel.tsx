@@ -7,6 +7,8 @@ import { cn } from "@/lib/utils";
 import { useUploadQueue } from "@/hooks/use-upload-queue";
 import {
   clearFinished,
+  describeStorageProblem,
+  isHeldInMemory,
   isUnsentOnDevice,
   kickUploadRunner,
   removePhoto,
@@ -97,6 +99,10 @@ export default function UploadQueuePanel() {
   );
   const unsentOnDevice = useMemo(() => items.filter(isUnsentOnDevice).length, [items]);
   const blockedOnServer = useMemo(() => items.filter((p) => p.status === "blocked").length, [items]);
+  const heldInMemory = useMemo(
+    () => items.filter((p) => isUnsentOnDevice(p) && isHeldInMemory(p.id)).length,
+    [items],
+  );
 
   useEffect(() => {
     if (unsentOnDevice === 0) return;
@@ -188,6 +194,19 @@ export default function UploadQueuePanel() {
         >
           <Loader2 className="h-4 w-4 animate-spin" />
           Keep this page open — {unsentOnDevice} photo{unsentOnDevice === 1 ? "" : "s"} still sending from this device.
+        </p>
+      ) : null}
+
+      {heldInMemory > 0 ? (
+        <p
+          className="mt-3 flex items-center gap-2 rounded-md bg-red-500/15 px-3 py-2 text-sm text-red-700 dark:text-red-300"
+          data-testid="text-queue-memory-only"
+        >
+          <TriangleAlert className="h-4 w-4 shrink-0" />
+          <span>
+            {heldInMemory} photo{heldInMemory === 1 ? " is" : "s are"} held in memory only. {describeStorageProblem()}{" "}
+            Do not close or refresh this page until {heldInMemory === 1 ? "it shows" : "they show"} "Sent to server".
+          </span>
         </p>
       ) : null}
 

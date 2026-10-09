@@ -79,9 +79,37 @@ const CHANNEL = "imageflow-upload-queue";
 
 let dbPromise: Promise<IDBDatabase> | null = null;
 
+/**
+ * Photos the browser's device store could not hold. They still upload from memory,
+ * but only while this page stays open — so the UI warns and we keep trying to move
+ * them back into IndexedDB.
+ */
+const memoryPhotos = new Map<string, QueuedPhoto>();
+
+export type StorageProblem = {
+  kind: "quota" | "unavailable";
+  detail: string;
+  usageMb: number | null;
+  quotaMb: number | null;
+  at: number;
+};
+let storageProblem: StorageProblem | null = null;
+
+export function getStorageProblem(): StorageProblem | null {
+  return storageProblem;
+}
+
+export function isHeldInMemory(id: string): boolean {
+  return memoryPhotos.has(id);
+}
+
 function openDb(): Promise<IDBDatabase> {
   if (!dbPromise) {
-    dbPromise = new Promise((resolve, reject) => {
+    const opening: Promise<IDBDatabase> = new Promise((resolve, reject) => {
+      if (typeof indexedDB === "undefined") {
+        reject(new DOMException("IndexedDB is not available in this browser", "NotSupportedError"));
+        return;
+      }
       const req = indexedDB.open(DB_NAME, 1);
       req.onupgradeneeded = () => {
         const db = req.result;
@@ -90,43 +118,204 @@ function openDb(): Promise<IDBDatabase> {
           store.createIndex("status", "status");
         }
       };
-      req.onsuccess = () => resolve(req.result);
-      req.onerror = () => {
-        dbPromise = null;
-        reject(req.error);
+      req.onsuccess = () => {
+        const db = req.result;
+        // Android Chrome closes connections when a tab is frozen or memory is low;
+        // forget this one so the next call reopens instead of failing forever.
+        const forget = () => {
+          if (dbPromise === opening) dbPromise = null;
+        };
+        db.onclose = forget;
+        db.onversionchange = () => {
+          db.close();
+          forget();
+        };
+        resolve(db);
       };
+      req.onerror = () => reject(req.error ?? new DOMException("Could not open device storage", "UnknownError"));
+    });
+    dbPromise = opening;
+    opening.catch(() => {
+      if (dbPromise === opening) dbPromise = null;
     });
   }
   return dbPromise;
 }
 
-function tx<T>(
-  mode: IDBTransactionMode,
-  fn: (store: IDBObjectStore) => IDBRequest<T> | void,
-): Promise<T | undefined> {
-  return openDb().then(
-    (db) =>
-      new Promise<T | undefined>((resolve, reject) => {
-        const t = db.transaction(STORE, mode);
-        const req = fn(t.objectStore(STORE));
-        t.oncomplete = () => resolve(req ? req.result : undefined);
-        t.onerror = () => reject(t.error);
-        t.onabort = () => reject(t.error);
-      }),
+function errorName(err: unknown): string {
+  return (err && typeof err === "object" && "name" in err ? String((err as any).name) : "") || "Error";
+}
+
+function isQuotaError(err: unknown): boolean {
+  return errorName(err) === "QuotaExceededError" || /quota/i.test(String((err as any)?.message ?? ""));
+}
+
+/** Errors that mean the connection is stale, not that storage is full. */
+function isConnectionError(err: unknown): boolean {
+  const name = errorName(err);
+  return (
+    name === "InvalidStateError" ||
+    name === "TransactionInactiveError" ||
+    name === "UnknownError" ||
+    /clos(ed|ing)/i.test(String((err as any)?.message ?? ""))
   );
 }
 
-export async function listPhotos(): Promise<QueuedPhoto[]> {
+function runTx<T>(
+  db: IDBDatabase,
+  mode: IDBTransactionMode,
+  fn: (store: IDBObjectStore) => IDBRequest<T> | void,
+): Promise<T | undefined> {
+  return new Promise<T | undefined>((resolve, reject) => {
+    let t: IDBTransaction;
+    let req: IDBRequest<T> | void;
+    try {
+      t = db.transaction(STORE, mode);
+      req = fn(t.objectStore(STORE));
+    } catch (err) {
+      reject(err);
+      return;
+    }
+    const fail = () => reject(t.error ?? new DOMException("Device storage transaction aborted", "AbortError"));
+    t.oncomplete = () => resolve(req ? req.result : undefined);
+    t.onerror = fail;
+    t.onabort = fail;
+  });
+}
+
+async function tx<T>(
+  mode: IDBTransactionMode,
+  fn: (store: IDBObjectStore) => IDBRequest<T> | void,
+): Promise<T | undefined> {
+  try {
+    return await runTx(await openDb(), mode, fn);
+  } catch (err) {
+    if (!isConnectionError(err)) throw err;
+    dbPromise = null;
+    return runTx(await openDb(), mode, fn);
+  }
+}
+
+/** Make room without touching unsent photos: drop finished rows and duplicate thumbnails. */
+async function freeDeviceSpace(): Promise<void> {
   const rows = (await tx<QueuedPhoto[]>("readonly", (s) => s.getAll())) ?? [];
-  return rows.sort((a, b) => a.createdAt - b.createdAt);
+  const done = rows.filter((p) => p.status === "done").map((p) => p.id);
+  // A thumb the same size as the blob is the original stored twice (compression fallback).
+  const slim = rows.filter((p) => p.status !== "done" && p.thumb && p.blob && p.thumb.size === p.blob.size);
+  await tx("readwrite", (s) => {
+    for (const id of done) s.delete(id);
+    for (const p of slim) s.put({ ...p, thumb: null });
+  });
+}
+
+async function writeWithRecovery(fn: (store: IDBObjectStore) => void): Promise<void> {
+  try {
+    await tx("readwrite", fn);
+  } catch (err) {
+    if (!isQuotaError(err)) throw err;
+    await freeDeviceSpace().catch(() => {});
+    await tx("readwrite", fn);
+  }
+}
+
+async function noteStorageProblem(err: unknown): Promise<void> {
+  const kind = isQuotaError(err) ? "quota" : "unavailable";
+  if (storageProblem?.kind === kind && Date.now() - storageProblem.at < 60_000) return;
+  let usageMb: number | null = null;
+  let quotaMb: number | null = null;
+  try {
+    const est = await (navigator as any).storage?.estimate?.();
+    if (est?.usage !== undefined) usageMb = Math.round(est.usage / 1048576);
+    if (est?.quota !== undefined) quotaMb = Math.round(est.quota / 1048576);
+  } catch {
+    /* estimate unsupported */
+  }
+  const firstTime = storageProblem === null;
+  storageProblem = {
+    kind,
+    detail: `${errorName(err)}: ${String((err as any)?.message ?? err).slice(0, 160)}`,
+    usageMb,
+    quotaMb,
+    at: Date.now(),
+  };
+  console.error("[uploadQueue] device storage problem:", storageProblem, err);
+  if (firstTime) emitChange();
+}
+
+/** Plain-language explanation for toasts/banners. */
+export function describeStorageProblem(p: StorageProblem | null = storageProblem): string {
+  if (!p) return "";
+  const usage =
+    p.usageMb !== null && p.quotaMb !== null ? ` (this site is using ${p.usageMb} MB of the ${p.quotaMb} MB the browser allows)` : "";
+  const privateHint =
+    p.quotaMb !== null && p.quotaMb < 300 ? " If this is a private/incognito tab, open ImageFlow in a normal tab." : "";
+  return p.kind === "quota"
+    ? `The browser's storage limit for ImageFlow is full${usage} — this is separate from the tablet's free space.${privateHint}`
+    : `The browser could not save photos on this device (${p.detail}).`;
+}
+
+export async function listPhotos(): Promise<QueuedPhoto[]> {
+  let rows: QueuedPhoto[] = [];
+  try {
+    rows = (await tx<QueuedPhoto[]>("readonly", (s) => s.getAll())) ?? [];
+  } catch (err) {
+    await noteStorageProblem(err);
+  }
+  const byId = new Map(rows.map((p) => [p.id, p]));
+  memoryPhotos.forEach((p, id) => byId.set(id, p));
+  return Array.from(byId.values()).sort((a, b) => a.createdAt - b.createdAt);
 }
 
 async function getPhoto(id: string): Promise<QueuedPhoto | undefined> {
-  return tx<QueuedPhoto>("readonly", (s) => s.get(id));
+  const held = memoryPhotos.get(id);
+  if (held) return held;
+  try {
+    return await tx<QueuedPhoto>("readonly", (s) => s.get(id));
+  } catch (err) {
+    await noteStorageProblem(err);
+    return undefined;
+  }
 }
 
-async function putPhoto(photo: QueuedPhoto): Promise<void> {
-  await tx("readwrite", (s) => s.put(photo));
+/** Returns false when the photo could only be kept in memory. Never throws. */
+async function putPhoto(photo: QueuedPhoto): Promise<boolean> {
+  if (memoryPhotos.has(photo.id)) {
+    memoryPhotos.set(photo.id, photo);
+    return false;
+  }
+  try {
+    await writeWithRecovery((s) => {
+      s.put(photo);
+    });
+    return true;
+  } catch (err) {
+    await noteStorageProblem(err);
+    memoryPhotos.set(photo.id, photo);
+    return false;
+  }
+}
+
+/** Move memory-only photos back into IndexedDB once it works again. */
+async function flushMemoryToDevice(): Promise<void> {
+  if (memoryPhotos.size === 0) return;
+  for (const [id, photo] of Array.from(memoryPhotos.entries())) {
+    if (photo.status === "done") {
+      memoryPhotos.delete(id);
+      continue;
+    }
+    try {
+      await writeWithRecovery((s) => {
+        s.put(photo);
+      });
+      memoryPhotos.delete(id);
+    } catch {
+      return;
+    }
+  }
+  if (memoryPhotos.size === 0 && storageProblem) {
+    storageProblem = null;
+    emitChange();
+  }
 }
 
 export async function updatePhoto(
@@ -142,21 +331,27 @@ export async function updatePhoto(
   return next;
 }
 
-export async function saveDraft(photo: QueuedPhoto): Promise<void> {
-  await putPhoto(photo);
+/** Returns false when the photo is held in memory only (device store unavailable or full). */
+export async function saveDraft(photo: QueuedPhoto): Promise<boolean> {
+  const persisted = await putPhoto(photo);
   emitChange();
+  return persisted;
 }
 
 export async function removePhoto(id: string): Promise<void> {
-  await tx("readwrite", (s) => s.delete(id));
-  emitChange();
+  await removePhotos([id]);
 }
 
 export async function removePhotos(ids: string[]): Promise<void> {
   if (ids.length === 0) return;
-  await tx("readwrite", (s) => {
-    for (const id of ids) s.delete(id);
-  });
+  for (const id of ids) memoryPhotos.delete(id);
+  try {
+    await tx("readwrite", (s) => {
+      for (const id of ids) s.delete(id);
+    });
+  } catch (err) {
+    await noteStorageProblem(err);
+  }
   emitChange();
 }
 
@@ -198,16 +393,31 @@ export function newPhotoId(): string {
   return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
 }
 
-/** Upsert full records as "queued" (works even if the draft write never landed). */
-export async function enqueuePhotos(photos: QueuedPhoto[]): Promise<void> {
+/**
+ * Upsert full records as "queued" (works even if the draft write never landed).
+ * Never blocks the upload: if the device store fails, photos upload from memory.
+ * Returns false when any photo is held in memory only.
+ */
+export async function enqueuePhotos(photos: QueuedPhoto[]): Promise<boolean> {
   const now = Date.now();
-  await tx("readwrite", (s) => {
-    for (const p of photos) {
-      s.put({ ...p, status: "queued", nextAttemptAt: now, queuedAt: now, updatedAt: now });
+  const queued = photos.map((p) => ({ ...p, status: "queued" as const, nextAttemptAt: now, queuedAt: now, updatedAt: now }));
+  const onDevice = queued.filter((p) => !memoryPhotos.has(p.id));
+  for (const p of queued) if (memoryPhotos.has(p.id)) memoryPhotos.set(p.id, p);
+  let persisted = onDevice.length === queued.length;
+  if (onDevice.length > 0) {
+    try {
+      await writeWithRecovery((s) => {
+        for (const p of onDevice) s.put(p);
+      });
+    } catch (err) {
+      await noteStorageProblem(err);
+      for (const p of onDevice) memoryPhotos.set(p.id, p);
+      persisted = false;
     }
-  });
+  }
   emitChange();
   kickUploadRunner();
+  return persisted;
 }
 
 export async function retryPhoto(id: string): Promise<void> {
@@ -497,6 +707,7 @@ async function pollServer(photos: QueuedPhoto[]): Promise<void> {
 }
 
 async function runPump(): Promise<void> {
+  await flushMemoryToDevice();
   const all = await listPhotos();
   const now = Date.now();
 
