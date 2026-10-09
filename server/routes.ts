@@ -18,7 +18,7 @@ import {
   retryUploadJob,
   stageUploadJob,
 } from "./uploadJobs";
-import { getUploadWorkerStatus, kickUploadWorker } from "./uploadWorker";
+import { getUploadWorkerStatus, kickUploadWorker, runCheckinSweep } from "./uploadWorker";
 
 const JOB_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const MAX_STATUS_IDS = 100;
@@ -309,6 +309,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.error("[upload] stats failed:", error);
       res.status(500).json({ error: "Stats failed", message: error?.message || String(error) });
     }
+  });
+
+  // Admin: check in files the app left checked out. Runs in the background; poll /api/upload/stats → worker.lastSweep.
+  app.post("/api/upload/checkin-sweep", requireImageflow, (req: AceAuthRequest, res) => {
+    if (!isImageflowAdmin(req)) return res.status(403).json({ error: "Admin only" });
+    if (!isDatabaseConfigured()) return res.status(503).json({ error: "DATABASE_URL not set" });
+    const mode = String(req.query.mode || req.body?.mode || "recent") === "full" ? "full" : "recent";
+    void runCheckinSweep(mode);
+    res.status(202).json({ started: true, mode, lastSweep: getUploadWorkerStatus().lastSweep });
   });
 
   app.get("/api/upload-history", requireImageflow, async (req: AceAuthRequest, res) => {

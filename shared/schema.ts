@@ -52,7 +52,14 @@ const bytea = customType<{ data: Buffer }>({
   },
 });
 
-export const UPLOAD_JOB_STATUSES = ["staged", "uploading", "done", "failed"] as const;
+export const UPLOAD_JOB_STATUSES = [
+  "staged",
+  "uploading",
+  "checkin_pending",
+  "blocked",
+  "done",
+  "failed",
+] as const;
 export type UploadJobStatus = (typeof UPLOAD_JOB_STATUSES)[number];
 
 /**
@@ -82,6 +89,7 @@ export const uploadJobs = pgTable(
     userEmail: text("user_email").notNull(),
     userName: text("user_name").notNull(),
     sharepointPath: text("sharepoint_path"),
+    sharepointItemId: text("sharepoint_item_id"),
     webUrl: text("web_url"),
     clientInfo: jsonb("client_info"),
     receivedMs: integer("received_ms"),

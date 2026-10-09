@@ -5,3 +5,4 @@
 *.cer
 *.meta.json
 *.b64.txt
+*env-snippet*.txt

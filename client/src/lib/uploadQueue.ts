@@ -15,8 +15,24 @@ export type QueueStatus =
   | "sending"
   | "staged"
   | "uploading"
+  | "checkin_pending"
+  | "blocked"
   | "done"
   | "failed";
+
+/** Still on this device only — closing the page would stall these until it is reopened. */
+export function isUnsentOnDevice(p: Pick<QueuedPhoto, "status" | "blob">): boolean {
+  return Boolean(p.blob) && (p.status === "queued" || p.status === "sending");
+}
+
+const SERVER_STATUSES: ReadonlySet<string> = new Set([
+  "staged",
+  "uploading",
+  "checkin_pending",
+  "blocked",
+  "done",
+  "failed",
+]);
 
 export type UploadMeta = {
   dept: string;
@@ -234,6 +250,49 @@ let pumping = false;
 let pumpAgain = false;
 let authBlocked = false;
 const inflight = new Set<string>();
+const AUTH_REDIRECT_KEY = "imageflow-auth-redirect-at";
+const AUTH_REDIRECT_COOLDOWN_MS = 60_000;
+let wakeLock: { release: () => Promise<void>; released?: boolean } | null = null;
+
+/** Send the user to SSO once; photos stay in IndexedDB and resume after login. */
+function requestLogin(loginUrl: string): void {
+  authBlocked = true;
+  try {
+    const last = Number(sessionStorage.getItem(AUTH_REDIRECT_KEY) || 0);
+    if (Date.now() - last < AUTH_REDIRECT_COOLDOWN_MS) return;
+    sessionStorage.setItem(AUTH_REDIRECT_KEY, String(Date.now()));
+  } catch {
+    /* storage unavailable — redirect anyway */
+  }
+  runnerOptions.onAuthRequired?.(loginUrl);
+}
+
+/** After a 401, check whether the session works again (e.g. refreshed in another tab). */
+async function probeAuth(): Promise<void> {
+  try {
+    const res = await fetch("/api/upload/jobs?ids=", { credentials: "include" });
+    if (res.ok) authBlocked = false;
+  } catch {
+    /* offline — try next tick */
+  }
+}
+
+/** Keep the screen awake while photos are still on this device, so the tablet does not sleep mid-send. */
+async function syncWakeLock(photos: QueuedPhoto[]): Promise<void> {
+  const nav = navigator as any;
+  if (!nav.wakeLock?.request) return;
+  const needed = photos.some(isUnsentOnDevice);
+  if (needed && (!wakeLock || wakeLock.released) && document.visibilityState === "visible") {
+    try {
+      wakeLock = await nav.wakeLock.request("screen");
+    } catch {
+      wakeLock = null;
+    }
+  } else if (!needed && wakeLock && !wakeLock.released) {
+    await wakeLock.release().catch(() => {});
+    wakeLock = null;
+  }
+}
 
 function deviceLabel(): string {
   const cap = (window as any).Capacitor;
@@ -329,8 +388,7 @@ async function sendOne(photo: QueuedPhoto): Promise<void> {
     const body = await res.json().catch(() => ({}) as any);
 
     if (res.status === 202 || res.ok) {
-      const status: QueueStatus =
-        body?.status === "done" ? "done" : body?.status === "uploading" ? "uploading" : "staged";
+      const status: QueueStatus = SERVER_STATUSES.has(body?.status) ? body.status : "staged";
       await updatePhoto(photo.id, {
         status,
         blob: null,
@@ -341,9 +399,17 @@ async function sendOne(photo: QueuedPhoto): Promise<void> {
       return;
     }
     if (res.status === 401 && body?.ssoLoginUrl) {
-      authBlocked = true;
       await updatePhoto(photo.id, { status: "queued" });
-      runnerOptions.onAuthRequired?.(body.ssoLoginUrl);
+      requestLogin(body.ssoLoginUrl);
+      return;
+    }
+    if (res.status === 403) {
+      await updatePhoto(photo.id, {
+        status: "failed",
+        attempts: attempt,
+        lastError:
+          "Your account does not have access to ImageFlow. Ask IT to grant access, then tap Retry — the photo is kept on this device.",
+      });
       return;
     }
     if (res.status === 503 && body?.fallback === "sync") {
@@ -372,13 +438,24 @@ async function sendOne(photo: QueuedPhoto): Promise<void> {
 }
 
 async function pollServer(photos: QueuedPhoto[]): Promise<void> {
-  const waiting = photos.filter((p) => p.status === "staged" || p.status === "uploading");
+  const waiting = photos.filter(
+    (p) =>
+      p.status === "staged" ||
+      p.status === "uploading" ||
+      p.status === "checkin_pending" ||
+      p.status === "blocked",
+  );
   for (let i = 0; i < waiting.length; i += 100) {
     const batch = waiting.slice(i, i + 100);
     const res = await fetch(
       `/api/upload/jobs?ids=${batch.map((p) => encodeURIComponent(p.id)).join(",")}`,
       { credentials: "include" },
     );
+    if (res.status === 401) {
+      const body = await res.json().catch(() => ({}) as any);
+      if (body?.ssoLoginUrl) requestLogin(body.ssoLoginUrl);
+      return;
+    }
     if (!res.ok) return;
     const body = (await res.json().catch(() => ({}))) as {
       items?: { id: string; status: string; lastError: string | null; webUrl: string | null }[];
@@ -398,14 +475,9 @@ async function pollServer(photos: QueuedPhoto[]): Promise<void> {
         changed = true;
         continue;
       }
-      const status: QueueStatus =
-        item.status === "done"
-          ? "done"
-          : item.status === "failed"
-            ? "failed"
-            : item.status === "uploading"
-              ? "uploading"
-              : "staged";
+      const status: QueueStatus = SERVER_STATUSES.has(item.status)
+        ? (item.status as QueueStatus)
+        : "staged";
       if (status !== photo.status || item.lastError !== photo.lastError) {
         await updatePhoto(
           photo.id,
@@ -439,7 +511,11 @@ async function runPump(): Promise<void> {
     }
   }
 
+  await syncWakeLock(all);
+
   if (typeof navigator !== "undefined" && navigator.onLine === false) return;
+
+  if (authBlocked) await probeAuth();
 
   if (!authBlocked) {
     const due = all.filter(
@@ -456,7 +532,9 @@ async function runPump(): Promise<void> {
   }
 
   try {
-    await pollServer(await listPhotos());
+    const latest = await listPhotos();
+    await syncWakeLock(latest);
+    await pollServer(latest);
   } catch {
     /* offline or server down — next tick retries */
   }
@@ -521,5 +599,7 @@ export function startUploadRunner(options: RunnerOptions = {}): () => void {
     window.removeEventListener("online", onOnline);
     document.removeEventListener("visibilitychange", onVisible);
     window.clearInterval(timer);
+    void wakeLock?.release().catch(() => {});
+    wakeLock = null;
   };
 }

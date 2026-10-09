@@ -12,7 +12,14 @@ Preferred communication style: Simple, everyday language.
 
 The target Docker host (managed by an external datacenter) has no reliable outbound access to the npm registry, so `docker build` cannot run `npm install` there — every attempt timed out after ~500s. To work around this, the Docker image is built from pre-installed dependencies and a pre-built `dist/` folder committed to the repo under `deploy_vendor/` (`deploy_vendor/node_modules`, `deploy_vendor/dist`). The `Dockerfile` only copies these in — it never calls `npm install`.
 
-**Whenever dependencies change or the app is rebuilt, `deploy_vendor/` must be regenerated from Replit before redeploying:**
+**Every source change must ship with a rebuilt `deploy_vendor/dist`** — otherwise production keeps running the old bundle (this happened from 2026-08-12 to 2026-10-09):
+```
+npm run vendor        # vite + esbuild → dist/ → deploy_vendor/dist + BUILD_INFO.json
+npm run vendor:check  # CI runs this; fails when deploy_vendor/dist is stale vs source
+```
+`npm run vendor` does not touch `deploy_vendor/node_modules` (Linux-built) and fails if the server imports a package missing from it. After redeploy, `GET /health` → `build.sourceHash` must equal `node scripts/vendor.mjs --hash`.
+
+**Only when dependencies change**, regenerate `deploy_vendor/node_modules` on Linux (Replit) before redeploying:
 ```
 rm -rf deploy_vendor
 mkdir -p deploy_vendor

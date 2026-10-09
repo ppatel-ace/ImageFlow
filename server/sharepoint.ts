@@ -504,27 +504,80 @@ async function getDriveItemInfo(
   return { id: data.id, webUrl: data.webUrl };
 }
 
-function isBenignCheckinFailure(status: number, body: string): boolean {
-  if (status === 400 || status === 404 || status === 409) return true;
-  return /already checked in|not checked out|no checkout/i.test(body);
+/** Upload landed in SharePoint but is still checked out (invisible to everyone but the app). */
+export class SharePointCheckinError extends Error {
+  constructor(
+    message: string,
+    readonly itemId: string,
+    readonly path: string,
+    readonly webUrl: string | undefined,
+  ) {
+    super(message);
+    this.name = "SharePointCheckinError";
+  }
 }
 
-async function checkInDriveItem(
+type ItemPublication = {
+  id: string;
+  webUrl?: string;
+  publication?: { level?: string };
+  lastModifiedBy?: { application?: { id?: string }; user?: { id?: string } };
+};
+
+const PUBLICATION_SELECT = "$select=id,name,webUrl,publication,lastModifiedBy";
+
+async function getItemPublication(driveId: string, itemId: string): Promise<ItemPublication> {
+  const res = await graphFetchWithRetry(`/drives/${driveId}/items/${itemId}?${PUBLICATION_SELECT}`);
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(
+      `Failed to read SharePoint item ${itemId} (${res.status}): ${text.slice(0, 200)}` +
+        sitesPermissionHint(res.status, text),
+    );
+  }
+  return (await res.json()) as ItemPublication;
+}
+
+function isCheckedOut(item: ItemPublication): boolean {
+  return item.publication?.level === "checkout";
+}
+
+/**
+ * Check the item in, then confirm with Graph that it is no longer checked out.
+ * The check-in response alone is not trusted: libraries with required columns reject
+ * check-in with 400 while the file stays checked out to the app identity.
+ */
+async function checkInAndVerify(
   driveId: string,
   itemId: string,
   comment: string,
-): Promise<void> {
+): Promise<{ webUrl?: string }> {
   const res = await graphFetchWithRetry(`/drives/${driveId}/items/${itemId}/checkin`, {
     method: "POST",
     body: JSON.stringify({ comment, checkInAs: "published" }),
   });
-  if (res.ok) return;
-  const text = await res.text().catch(() => "");
-  if (isBenignCheckinFailure(res.status, text)) return;
+  const checkinDetail = res.ok
+    ? ""
+    : `check-in returned ${res.status}: ${(await res.text().catch(() => "")).slice(0, 200)}`;
+  if (res.ok) await res.text().catch(() => "");
+
+  const item = await getItemPublication(driveId, itemId);
+  if (!isCheckedOut(item)) return { webUrl: item.webUrl };
+
   throw new Error(
-    `SharePoint check-in failed (${res.status}): ${text.slice(0, 200)}` +
-      sitesPermissionHint(res.status, text),
+    `SharePoint file is still checked out after check-in` +
+      (checkinDetail ? ` (${checkinDetail})` : "") +
+      `. Check the library's required columns / check-in permissions.` +
+      (res.status === 401 || res.status === 403 ? sitesPermissionHint(res.status, checkinDetail) : ""),
   );
+}
+
+async function releaseBeforeOverwrite(driveId: string, itemId: string, comment: string): Promise<void> {
+  const res = await graphFetchWithRetry(`/drives/${driveId}/items/${itemId}/checkin`, {
+    method: "POST",
+    body: JSON.stringify({ comment, checkInAs: "published" }),
+  });
+  await res.text().catch(() => "");
 }
 
 async function checkoutDriveItem(driveId: string, itemId: string): Promise<void> {
@@ -553,7 +606,7 @@ async function prepareExistingItemForOverwrite(
 ): Promise<string | null> {
   const existing = await getDriveItemInfo(driveId, `${folderPath}/${fileName}`);
   if (!existing?.id) return null;
-  await checkInDriveItem(
+  await releaseBeforeOverwrite(
     driveId,
     existing.id,
     `ImageFlow release before overwrite: ${fileName}`,
@@ -758,6 +811,7 @@ export async function uploadFileToSharePoint(
 ): Promise<{
   success: true;
   path: string;
+  itemId: string;
   webUrl?: string;
   timings: SharePointUploadTimings;
 }> {
@@ -826,13 +880,25 @@ export async function uploadFileToSharePoint(
 
   // Require Check Out libraries leave Graph PUTs checked out to the app identity
   // until check-in — fail the upload if the file would stay invisible in Documents.
-  await checkInDriveItem(driveId, uploaded.id, `ImageFlow upload: ${sanitizedFile}`);
+  const itemPath = `${folderPath}/${sanitizedFile}`;
+  let checkedIn: { webUrl?: string };
+  try {
+    checkedIn = await checkInAndVerify(driveId, uploaded.id, `ImageFlow upload: ${sanitizedFile}`);
+  } catch (err) {
+    throw new SharePointCheckinError(
+      err instanceof Error ? err.message : String(err),
+      uploaded.id,
+      itemPath,
+      uploaded.webUrl,
+    );
+  }
   const checkinMs = lap();
 
   return {
     success: true,
-    path: `${folderPath}/${sanitizedFile}`,
-    webUrl: uploaded.webUrl,
+    path: itemPath,
+    itemId: uploaded.id,
+    webUrl: checkedIn.webUrl ?? uploaded.webUrl,
     timings: {
       tokenMs,
       siteMs,
@@ -843,6 +909,128 @@ export async function uploadFileToSharePoint(
       lockedRetry,
     },
   };
+}
+
+async function resolveDrive(): Promise<string> {
+  await getAccessToken();
+  const siteId = await resolveSiteId();
+  return resolveDriveId(siteId);
+}
+
+/** Re-run check-in for an upload whose content already landed (repair sweeper). */
+export async function retryCheckIn(
+  itemId: string | null,
+  itemPath: string,
+): Promise<{ itemId: string; webUrl?: string }> {
+  const driveId = await resolveDrive();
+  let id = itemId;
+  if (!id) {
+    const found = await getDriveItemInfo(driveId, itemPath);
+    if (!found?.id) throw new Error(`SharePoint item ${itemPath} not found for check-in`);
+    id = found.id;
+  }
+  const fileName = itemPath.split("/").pop() || itemPath;
+  const result = await checkInAndVerify(driveId, id, `ImageFlow upload: ${fileName}`);
+  return { itemId: id, webUrl: result.webUrl };
+}
+
+/** Only touch files the app itself left checked out — never a person's checkout. */
+function isCheckedOutByApp(item: ItemPublication): boolean {
+  if (!isCheckedOut(item)) return false;
+  const clientId = process.env.AZURE_CLIENT_ID?.trim().toLowerCase();
+  const appId = item.lastModifiedBy?.application?.id?.toLowerCase();
+  return Boolean(clientId && appId && appId === clientId);
+}
+
+export type CheckinSweepResult = {
+  scanned: number;
+  checkedOutByApp: number;
+  checkedIn: number;
+  failed: number;
+  errors: string[];
+};
+
+function emptySweep(): CheckinSweepResult {
+  return { scanned: 0, checkedOutByApp: 0, checkedIn: 0, failed: 0, errors: [] };
+}
+
+async function mapLimit<T>(items: T[], limit: number, fn: (item: T) => Promise<void>): Promise<void> {
+  let index = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (index < items.length) {
+      const next = items[index++];
+      await fn(next);
+    }
+  });
+  await Promise.all(workers);
+}
+
+async function sweepItem(driveId: string, item: ItemPublication, result: CheckinSweepResult): Promise<void> {
+  result.scanned++;
+  if (!isCheckedOutByApp(item)) return;
+  result.checkedOutByApp++;
+  try {
+    await checkInAndVerify(driveId, item.id, "ImageFlow check-in sweep");
+    result.checkedIn++;
+  } catch (err) {
+    result.failed++;
+    if (result.errors.length < 10) {
+      result.errors.push(`${item.id}: ${(err instanceof Error ? err.message : String(err)).slice(0, 200)}`);
+    }
+  }
+}
+
+/** Check in any of these recent upload paths that the app left checked out. */
+export async function sweepPathsCheckedOutByApp(paths: string[]): Promise<CheckinSweepResult> {
+  const driveId = await resolveDrive();
+  const result = emptySweep();
+  await mapLimit(Array.from(new Set(paths)), 4, async (itemPath) => {
+    const segments = itemPath.split("/").filter(Boolean);
+    const res = await graphFetchWithRetry(
+      `/drives/${driveId}/root:/${driveItemPath(segments)}?${PUBLICATION_SELECT}`,
+    );
+    if (!res.ok) {
+      await res.text().catch(() => "");
+      return;
+    }
+    await sweepItem(driveId, (await res.json()) as ItemPublication, result);
+  });
+  return result;
+}
+
+/** Walk the whole library (one-time cleanup of files the old build left checked out). */
+export async function sweepTreeCheckedOutByApp(): Promise<CheckinSweepResult> {
+  const driveId = await resolveDrive();
+  const result = emptySweep();
+  const folders: string[] = [`/drives/${driveId}/root/children`];
+  const select = "$select=id,name,webUrl,folder,file,publication,lastModifiedBy&$top=200";
+
+  while (folders.length > 0) {
+    const batch = folders.splice(0, 4);
+    await Promise.all(
+      batch.map(async (start) => {
+        let url: string | null = start.includes("?") ? start : `${start}?${select}`;
+        while (url) {
+          const res = await graphFetchWithRetry(url);
+          if (!res.ok) {
+            const text = await res.text().catch(() => "");
+            if (result.errors.length < 10) result.errors.push(`list ${res.status}: ${text.slice(0, 160)}`);
+            return;
+          }
+          const page = (await res.json()) as {
+            value?: (ItemPublication & { folder?: unknown; file?: unknown })[];
+            "@odata.nextLink"?: string;
+          };
+          for (const child of page.value ?? []) {
+            if (child.folder) folders.push(`/drives/${driveId}/items/${child.id}/children`);
+            else if (child.file) await sweepItem(driveId, child, result);
+          }
+          url = page["@odata.nextLink"] ?? null;
+        }
+      }),
+    );
+  }
+  return result;
 }
 
 /** Non-secret status for /health */

@@ -82,6 +82,7 @@ export async function ensureUploadJobsTable(): Promise<void> {
             `);
           }
           await client.query(`
+            ALTER TABLE imageflow_upload_jobs ADD COLUMN IF NOT EXISTS sharepoint_item_id text;
             CREATE INDEX IF NOT EXISTS imageflow_upload_jobs_status_next_idx
               ON imageflow_upload_jobs (status, next_attempt_at);
             CREATE INDEX IF NOT EXISTS imageflow_upload_jobs_user_idx

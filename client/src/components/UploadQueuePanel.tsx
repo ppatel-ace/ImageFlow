@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils";
 import { useUploadQueue } from "@/hooks/use-upload-queue";
 import {
   clearFinished,
+  isUnsentOnDevice,
   kickUploadRunner,
   removePhoto,
   retryPhoto,
@@ -20,17 +21,20 @@ function statusLabel(p: QueuedPhoto): { text: string; tone: "muted" | "busy" | "
     case "queued":
       return p.attempts > 0
         ? { text: `Retrying (${p.attempts})`, tone: "warn" }
-        : { text: "Queued", tone: "muted" };
+        : { text: "Waiting to send", tone: "muted" };
     case "sending":
       return { text: "Sending", tone: "busy" };
     case "staged":
-      return { text: "On server", tone: "busy" };
     case "uploading":
-      return { text: "To SharePoint", tone: "busy" };
+      return { text: "Sent to server", tone: "busy" };
+    case "checkin_pending":
+      return { text: "In SharePoint", tone: "busy" };
     case "done":
-      return { text: "In SharePoint", tone: "ok" };
+      return { text: "Checked in", tone: "ok" };
+    case "blocked":
+      return { text: "Needs attention", tone: "warn" };
     case "failed":
-      return { text: "Failed", tone: "bad" };
+      return { text: "Needs attention", tone: "bad" };
     default:
       return { text: p.status, tone: "muted" };
   }
@@ -91,6 +95,18 @@ export default function UploadQueuePanel() {
     }),
     [items],
   );
+  const unsentOnDevice = useMemo(() => items.filter(isUnsentOnDevice).length, [items]);
+  const blockedOnServer = useMemo(() => items.filter((p) => p.status === "blocked").length, [items]);
+
+  useEffect(() => {
+    if (unsentOnDevice === 0) return;
+    const warn = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [unsentOnDevice]);
 
   const visible = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -162,6 +178,27 @@ export default function UploadQueuePanel() {
         <p className="mt-3 flex items-center gap-2 rounded-md bg-amber-500/15 px-3 py-2 text-sm text-amber-700 dark:text-amber-300">
           <WifiOff className="h-4 w-4" />
           Offline — photos are saved on this device and will upload automatically when the connection returns.
+        </p>
+      ) : null}
+
+      {online && unsentOnDevice > 0 ? (
+        <p
+          className="mt-3 flex items-center gap-2 rounded-md bg-blue-500/15 px-3 py-2 text-sm text-blue-700 dark:text-blue-300"
+          data-testid="text-queue-keep-open"
+        >
+          <Loader2 className="h-4 w-4 animate-spin" />
+          Keep this page open — {unsentOnDevice} photo{unsentOnDevice === 1 ? "" : "s"} still sending from this device.
+        </p>
+      ) : null}
+
+      {blockedOnServer > 0 ? (
+        <p
+          className="mt-3 flex items-center gap-2 rounded-md bg-amber-500/15 px-3 py-2 text-sm text-amber-700 dark:text-amber-300"
+          data-testid="text-queue-blocked"
+        >
+          <TriangleAlert className="h-4 w-4" />
+          SharePoint is not accepting uploads right now. IT has been alerted. Your photos are safe on the server and
+          will upload automatically — no need to retake them.
         </p>
       ) : null}
 

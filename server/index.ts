@@ -9,6 +9,8 @@ import { createActivityAudit, createUsageRelay } from "./activityAudit";
 import { getSftpEnvStatus } from "./sftpImport";
 import { getSharePointEnvStatus } from "./sharepoint";
 import { getUploadWorkerStatus, startUploadWorker } from "./uploadWorker";
+import { getUploadQueueSnapshot, startUploadMonitor } from "./uploadMonitor";
+import { getBuildInfo } from "./buildInfo";
 import path from "path";
 import fs from "fs";
 import { fileURLToPath } from "url";
@@ -30,10 +32,12 @@ app.use(express.urlencoded({ extended: false }));
 app.get("/health", (_req, res) => {
   const sftp = getSftpEnvStatus();
   const sp = getSharePointEnvStatus();
+  const worker = getUploadWorkerStatus();
+  const queue = getUploadQueueSnapshot();
   res.json({
     ok: true,
     service: "imageflow",
-    build: "sso-static-fix-2",
+    build: getBuildInfo(),
     ssoEnabled: isSsoEnabled(),
     sftp: {
       configured: sftp.configured,
@@ -48,7 +52,24 @@ app.get("/health", (_req, res) => {
       enableFlag: sftp.enableFlag,
     },
     sharepoint: sp,
-    uploadWorker: getUploadWorkerStatus(),
+    uploadWorker: {
+      started: worker.started,
+      active: worker.active,
+      concurrency: worker.concurrency,
+      blocked: worker.blocked !== null,
+      blockedSince: worker.blocked?.since ?? null,
+    },
+    uploadQueue: queue
+      ? {
+          pending: queue.pending,
+          oldestPendingSec: queue.oldestPendingSec,
+          blocked: queue.blocked,
+          checkinPending: queue.checkinPending,
+          failedLast24h: queue.failedLast24h,
+          checkedAt: queue.checkedAt,
+        }
+      : null,
+    alertsConfigured: Boolean(process.env.IMAGEFLOW_ALERT_WEBHOOK?.trim()),
   });
 });
 
@@ -189,6 +210,7 @@ app.post(
 
       initializeScheduler();
       startUploadWorker();
+      startUploadMonitor();
     },
   );
 })();

@@ -601,7 +601,7 @@ export default function ImageUploadForm() {
       toast({
         title: `${count} photo${count === 1 ? "" : "s"} queued`,
         description: navigator.onLine
-          ? "Uploading in the background — track progress in the Upload Queue. You can start the next work order."
+          ? "Sending now — keep this page open until the Upload Queue shows \"Sent to server\" (a few seconds). You can start the next work order."
           : "You're offline. Photos are saved on this device and will upload automatically when the connection returns.",
       });
       setSharePointSuccess(true);

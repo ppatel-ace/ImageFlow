@@ -26,8 +26,10 @@ services:
       DATABASE_URL: ${DATABASE_URL:-}
       # Upload staging queue (imageflow_upload_jobs) worker + stats access
       IMAGEFLOW_ADMIN_EMAILS: ${IMAGEFLOW_ADMIN_EMAILS:-}
-      IMAGEFLOW_UPLOAD_CONCURRENCY: ${IMAGEFLOW_UPLOAD_CONCURRENCY:-3}
+      IMAGEFLOW_UPLOAD_CONCURRENCY: ${IMAGEFLOW_UPLOAD_CONCURRENCY:-6}
       IMAGEFLOW_UPLOAD_WORKER: ${IMAGEFLOW_UPLOAD_WORKER:-true}
+      # Teams incoming-webhook / Workflows URL for stuck, blocked or not-checked-in uploads
+      IMAGEFLOW_ALERT_WEBHOOK: ${IMAGEFLOW_ALERT_WEBHOOK:-}
       AZURE_TENANT_ID: ${AZURE_TENANT_ID:-}
       AZURE_CLIENT_ID: ${AZURE_CLIENT_ID:-}
       AZURE_CLIENT_SECRET: ${AZURE_CLIENT_SECRET:-}
@@ -43,7 +45,7 @@ services:
       SFTP_PORT: ${SFTP_PORT:-22}
       SFTP_USER: ${SFTP_USER:-ppadm}
       # Prefer SFTP_PASSWORD_B64 — Portainer collapses "$$" → "$" in plain passwords.
-      # Real password 235$$hPW#@! → base64 MjM1JCRoUFcjQCE=
+      # Set the value in Portainer only; never commit it.
       SFTP_PASSWORD: ${SFTP_PASSWORD:-}
       SFTP_PASSWORD_B64: ${SFTP_PASSWORD_B64:-}
       SFTP_PASSWORD_DOLLAR_ESCAPE: ${SFTP_PASSWORD_DOLLAR_ESCAPE:-double}

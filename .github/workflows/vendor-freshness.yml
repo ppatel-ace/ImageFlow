@@ -1,0 +1,22 @@
+# Fails when deploy_vendor/dist (what the Dockerfile ships) was not rebuilt from the
+# source being pushed. Production silently ran a stale bundle for two months because of this.
+# Fix a red run with `npm run vendor`, then commit deploy_vendor/.
+
+name: deploy_vendor freshness
+
+on:
+  push:
+    branches: [main, staging]
+  pull_request:
+    branches: [main, staging]
+
+jobs:
+  vendor-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: deploy_vendor/dist matches source
+        run: node scripts/vendor.mjs --check
