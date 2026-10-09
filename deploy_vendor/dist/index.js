@@ -831,6 +831,10 @@ async function putFileContent(driveId, folderPath, fileName, fileBuffer) {
   }
 }
 async function uploadFileToSharePoint(customerName, dept, workOrderNumber, fileName, fileBuffer) {
+  const folderPath = [dept, customerName, workOrderNumber].map(sanitizePathSegment).join("/");
+  return uploadFileToSharePointFolder(folderPath, sanitizePathSegment(fileName), fileBuffer);
+}
+async function uploadFileToSharePointFolder(folderPath, sanitizedFile, fileBuffer) {
   const startedAt = Date.now();
   let mark = startedAt;
   const lap = () => {
@@ -844,11 +848,6 @@ async function uploadFileToSharePoint(customerName, dept, workOrderNumber, fileN
   const siteId = await resolveSiteId();
   const driveId = await resolveDriveId(siteId);
   const siteMs = lap();
-  const sanitizedCustomer = sanitizePathSegment(customerName);
-  const sanitizedDept = sanitizePathSegment(dept);
-  const sanitizedWo = sanitizePathSegment(workOrderNumber);
-  const sanitizedFile = sanitizePathSegment(fileName);
-  const folderPath = `${sanitizedDept}/${sanitizedCustomer}/${sanitizedWo}`;
   await ensureFolderPath(driveId, folderPath);
   const folderMs = lap();
   let lockedRetry = false;
@@ -931,6 +930,84 @@ async function retryCheckIn(itemId, itemPath) {
   const fileName = itemPath.split("/").pop() || itemPath;
   const result = await checkInAndVerify(driveId, id, `ImageFlow upload: ${fileName}`);
   return { itemId: id, webUrl: result.webUrl };
+}
+async function lookupSharePointFile(itemPath) {
+  const driveId = await resolveDrive();
+  const segments = itemPath.split("/").filter(Boolean);
+  const res = await graphFetchWithRetry(`/drives/${driveId}/root:/${driveItemPath(segments)}?${PUBLICATION_SELECT}`);
+  if (res.status === 404) {
+    await res.text().catch(() => "");
+    return null;
+  }
+  if (!res.ok) {
+    const text2 = await res.text().catch(() => "");
+    throw new Error(`Failed to look up SharePoint item ${itemPath} (${res.status}): ${text2.slice(0, 200)}` + sitesPermissionHint(res.status, text2));
+  }
+  const item = await res.json();
+  return { id: item.id, webUrl: item.webUrl, checkedOut: isCheckedOut(item) };
+}
+async function checkInAnyCheckout(itemId, comment) {
+  const driveId = await resolveDrive();
+  return checkInAndVerify(driveId, itemId, comment);
+}
+async function listChildrenByPath(folderPath) {
+  const driveId = await resolveDrive();
+  const segments = folderPath.split("/").filter(Boolean);
+  const select = "$select=id,name,webUrl,folder,file,publication,lastModifiedBy&$top=200";
+  let url = segments.length === 0 ? `/drives/${driveId}/root/children?${select}` : `/drives/${driveId}/root:/${driveItemPath(segments)}:/children?${select}`;
+  const out = [];
+  while (url) {
+    const res = await graphFetchWithRetry(url);
+    if (res.status === 404) {
+      await res.text().catch(() => "");
+      return [];
+    }
+    if (!res.ok) {
+      const text2 = await res.text().catch(() => "");
+      throw new Error(`Failed to list SharePoint folder ${folderPath} (${res.status}): ${text2.slice(0, 200)}` + sitesPermissionHint(res.status, text2));
+    }
+    const page = await res.json();
+    out.push(...page.value ?? []);
+    url = page["@odata.nextLink"] ?? null;
+  }
+  return out;
+}
+async function listSharePointSubfolders(folderPath) {
+  return (await listChildrenByPath(folderPath)).filter((c) => c.folder).map((c) => c.name);
+}
+async function checkInFolderCheckouts(folderPath) {
+  const driveId = await resolveDrive();
+  const result = emptySweep();
+  for (const child of await listChildrenByPath(folderPath)) {
+    if (!child.file) continue;
+    result.scanned++;
+    if (!isCheckedOut(child)) continue;
+    result.checkedOutByApp++;
+    try {
+      await checkInAndVerify(driveId, child.id, "ImageFlow migration: check in leftover checkout");
+      result.checkedIn++;
+    } catch (err) {
+      result.failed++;
+      if (result.errors.length < 10) result.errors.push(`${child.name}: ${err.message.slice(0, 200)}`);
+    }
+  }
+  return result;
+}
+async function renameSharePointFolder(folderPath, newName) {
+  const driveId = await resolveDrive();
+  const segments = folderPath.split("/").filter(Boolean);
+  const res = await graphFetchWithRetry(`/drives/${driveId}/root:/${driveItemPath(segments)}`, {
+    method: "PATCH",
+    body: JSON.stringify({ name: newName, "@microsoft.graph.conflictBehavior": "fail" })
+  });
+  if (!res.ok) {
+    const text2 = await res.text().catch(() => "");
+    throw new Error(`Failed to rename ${folderPath} \u2192 ${newName} (${res.status}): ${text2.slice(0, 200)}`);
+  }
+  await res.text().catch(() => "");
+  for (const key of Array.from(ensuredFolders)) {
+    if (key.includes(`:${folderPath}`)) ensuredFolders.delete(key);
+  }
 }
 function isCheckedOutByApp(item) {
   if (!isCheckedOut(item)) return false;
@@ -1056,6 +1133,96 @@ import { readSheet } from "read-excel-file/node";
 import { readdirSync } from "fs";
 import { fileURLToPath as fileURLToPath2 } from "url";
 import { dirname as dirname2, join as join2 } from "path";
+
+// server/driveMigrationPlan.ts
+var OLD_PHOTOS_FOLDER = "Old Photos";
+var DEPARTMENTS = ["QC", "Testing", "Production"];
+var DEPT_ALIASES = {
+  qc: "QC",
+  quality: "QC",
+  qualitycontrol: "QC",
+  testing: "Testing",
+  test: "Testing",
+  production: "Production",
+  prod: "Production"
+};
+var ENTITY_RE = /&(amp|quot|apos|lt|gt|#\d+|#x[0-9a-f]+);/gi;
+var ENTITY_MAP = { amp: "&", quot: '"', apos: "'", lt: "<", gt: ">" };
+function decodeEntities(value) {
+  let out = value;
+  for (let i = 0; i < 2; i++) {
+    out = out.replace(ENTITY_RE, (_m, code) => {
+      const lower = code.toLowerCase();
+      if (lower.startsWith("#x")) return String.fromCodePoint(parseInt(lower.slice(2), 16));
+      if (lower.startsWith("#")) return String.fromCodePoint(Number(lower.slice(1)));
+      return ENTITY_MAP[lower] ?? _m;
+    });
+  }
+  return out;
+}
+function hasEntities(value) {
+  return new RegExp(ENTITY_RE.source, "i").test(value);
+}
+function nameKey(value) {
+  return decodeEntities(value).toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+function canonicalDept(folderName) {
+  return DEPT_ALIASES[nameKey(folderName)] ?? null;
+}
+function cleanSegment(value) {
+  return sanitizePathSegment(decodeEntities(value));
+}
+var JUNK_RE = /^(desktop\.ini|thumbs\.db|\.ds_store|~\$.*)$/i;
+function classifyDriveFile(name, mimeType) {
+  if (JUNK_RE.test(name)) return { copy: false, reason: "System file (not a photo)" };
+  if (mimeType.startsWith("application/vnd.google-apps.")) return { copy: false, reason: "Google Docs item (not a photo)" };
+  if (mimeType.startsWith("image/")) return { copy: true };
+  return { copy: false, reason: `Not a photo (${mimeType || "unknown type"})` };
+}
+function mapDrivePath(folders) {
+  if (folders.length === 3) {
+    const dept = canonicalDept(folders[1]);
+    if (dept) return { kind: "mapped", dept, driveCustomer: folders[0], workOrder: cleanSegment(folders[2]) };
+  }
+  return { kind: "old_photos", folder: [OLD_PHOTOS_FOLDER, ...folders.map(cleanSegment)].join("/") };
+}
+function resolveCustomerFolder(driveCustomer, existingInDept) {
+  const key = nameKey(driveCustomer);
+  const decoded = cleanSegment(driveCustomer);
+  const matches = existingInDept.filter((n) => nameKey(n) === key);
+  if (matches.length === 0) return { name: decoded, existing: false };
+  const exact = matches.find((n) => n === decoded);
+  if (exact) return { name: exact, existing: true };
+  const clean = matches.find((n) => !hasEntities(n));
+  if (clean) return { name: clean, existing: true };
+  return { name: cleanSegment(matches[0]), existing: true };
+}
+function planRenames(existingByDept) {
+  const renames = [];
+  const conflicts = [];
+  for (const dept of DEPARTMENTS) {
+    const names = existingByDept[dept] ?? [];
+    for (const from of names) {
+      if (!hasEntities(from)) continue;
+      const to = cleanSegment(from);
+      if (to === from) continue;
+      (names.includes(to) ? conflicts : renames).push({ dept, from, to });
+    }
+  }
+  return { renames, conflicts };
+}
+function uniqueFileName(folder, fileName, taken) {
+  const clean = sanitizePathSegment(fileName);
+  const dot = clean.lastIndexOf(".");
+  const stem = dot > 0 ? clean.slice(0, dot) : clean;
+  const ext = dot > 0 ? clean.slice(dot) : "";
+  let candidate = clean;
+  for (let n = 2; taken.has(`${folder}/${candidate}`.toLowerCase()); n++) candidate = `${stem} (${n})${ext}`;
+  taken.add(`${folder}/${candidate}`.toLowerCase());
+  return candidate;
+}
+
+// server/excelParser.ts
 var __filename = fileURLToPath2(import.meta.url);
 var __dirname = dirname2(__filename);
 var cachedData = null;
@@ -1067,7 +1234,7 @@ async function parseExcelFile(filePath) {
     const row = rows[i];
     if (!row || row.length === 0) continue;
     const workOrder = row[4] != null ? String(row[4]).trim() : "";
-    const customerName = row[6] != null ? String(row[6]).trim() : "";
+    const customerName = row[6] != null ? decodeEntities(String(row[6])).trim() : "";
     const rev = row[14] != null ? String(row[14]).trim() : "";
     const partNumber = row[9] != null ? String(row[9]).trim() : "";
     if (workOrder && partNumber) {
@@ -2398,6 +2565,661 @@ function getUploadWorkerStatus() {
   };
 }
 
+// server/driveMigration.ts
+import { randomUUID as randomUUID3 } from "crypto";
+
+// server/googleDriveReader.ts
+import { createSign as createSign2 } from "crypto";
+var TOKEN_URL = "https://oauth2.googleapis.com/token";
+var DRIVE_API = "https://www.googleapis.com/drive/v3";
+var SCOPE = "https://www.googleapis.com/auth/drive.readonly";
+var FOLDER_MIME = "application/vnd.google-apps.folder";
+var DriveApiError = class extends Error {
+  constructor(message, status) {
+    super(message);
+    this.status = status;
+    this.name = "DriveApiError";
+  }
+};
+var cachedKey;
+var cachedToken = null;
+function loadKey() {
+  if (cachedKey !== void 0) return cachedKey;
+  const raw = process.env.GOOGLE_SERVICE_ACCOUNT_JSON?.trim();
+  if (!raw) return cachedKey = null;
+  try {
+    const text2 = raw.startsWith("{") ? raw : Buffer.from(raw, "base64").toString("utf8");
+    const parsed = JSON.parse(text2);
+    if (!parsed.client_email || !parsed.private_key) throw new Error("missing client_email/private_key");
+    return cachedKey = parsed;
+  } catch (err) {
+    console.error("[gdrive-reader] GOOGLE_SERVICE_ACCOUNT_JSON is not a valid service-account key:", err.message);
+    return cachedKey = null;
+  }
+}
+function getDriveReaderStatus() {
+  const key = loadKey();
+  return { configured: Boolean(key), serviceAccountEmail: key?.client_email ?? null };
+}
+function base64Url2(input) {
+  return Buffer.from(input).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+async function getToken() {
+  if (cachedToken && cachedToken.expiresAt - 6e4 > Date.now()) return cachedToken.token;
+  const key = loadKey();
+  if (!key) throw new Error("Missing required env var: GOOGLE_SERVICE_ACCOUNT_JSON");
+  const now = Math.floor(Date.now() / 1e3);
+  const header = base64Url2(JSON.stringify({ alg: "RS256", typ: "JWT" }));
+  const claims = base64Url2(
+    JSON.stringify({ iss: key.client_email, scope: SCOPE, aud: key.token_uri || TOKEN_URL, iat: now, exp: now + 3600 })
+  );
+  const signer = createSign2("RSA-SHA256");
+  signer.update(`${header}.${claims}`);
+  const assertion = `${header}.${claims}.${base64Url2(signer.sign(key.private_key))}`;
+  const res = await fetch(key.token_uri || TOKEN_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer", assertion })
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok || !body.access_token) {
+    throw new DriveApiError(`Google token request failed (${res.status}): ${body.error_description || "no token"}`, res.status);
+  }
+  cachedToken = { token: body.access_token, expiresAt: Date.now() + (body.expires_in ?? 3600) * 1e3 };
+  return cachedToken.token;
+}
+function sleep2(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+async function driveFetch(url) {
+  for (let attempt = 0; ; attempt++) {
+    const res = await fetch(url, {
+      headers: { Authorization: `Bearer ${await getToken()}` },
+      signal: AbortSignal.timeout(12e4)
+    });
+    const retryable = res.status === 429 || res.status >= 500 || res.status === 403 && /rateLimitExceeded|userRateLimitExceeded/.test(await res.clone().text());
+    if (res.ok || !retryable || attempt >= 4) return res;
+    if (res.status === 401) cachedToken = null;
+    await res.text().catch(() => "");
+    await sleep2(Math.min(3e4, 1e3 * 2 ** attempt));
+  }
+}
+async function failure(res, context) {
+  const text2 = await res.text().catch(() => "");
+  let detail = text2.slice(0, 200);
+  try {
+    detail = JSON.parse(text2).error?.message || detail;
+  } catch {
+  }
+  return new DriveApiError(`Google Drive ${context} failed (${res.status}): ${detail}`, res.status);
+}
+var DRIVE_ID_RE = /^[A-Za-z0-9_-]{10,200}$/;
+function parseDriveFolderId(input) {
+  const value = input.trim();
+  if (DRIVE_ID_RE.test(value)) return value;
+  const match = value.match(/\/folders\/([A-Za-z0-9_-]{10,200})/) || value.match(/[?&]id=([A-Za-z0-9_-]{10,200})/);
+  return match ? match[1] : null;
+}
+async function getDriveFolder(folderId) {
+  if (!DRIVE_ID_RE.test(folderId)) throw new Error("Invalid Drive folder id");
+  const params = new URLSearchParams({ fields: "id,name,mimeType", supportsAllDrives: "true" });
+  const res = await driveFetch(`${DRIVE_API}/files/${folderId}?${params}`);
+  if (!res.ok) throw await failure(res, "folder lookup");
+  const data = await res.json();
+  if (data.mimeType !== FOLDER_MIME) throw new Error(`Drive item ${data.name} is not a folder`);
+  return { id: data.id, name: data.name };
+}
+async function listDriveChildren(folderId) {
+  if (!DRIVE_ID_RE.test(folderId)) throw new Error("Invalid Drive folder id");
+  const out = [];
+  let pageToken;
+  do {
+    const params = new URLSearchParams({
+      q: `'${folderId}' in parents and trashed = false`,
+      fields: "nextPageToken, files(id,name,mimeType,size,modifiedTime)",
+      pageSize: "1000",
+      supportsAllDrives: "true",
+      includeItemsFromAllDrives: "true"
+    });
+    if (pageToken) params.set("pageToken", pageToken);
+    const res = await driveFetch(`${DRIVE_API}/files?${params}`);
+    if (!res.ok) throw await failure(res, "folder listing");
+    const page = await res.json();
+    for (const f of page.files ?? []) {
+      out.push({
+        id: f.id,
+        name: f.name,
+        mimeType: f.mimeType,
+        size: f.size !== void 0 ? Number(f.size) : null,
+        modifiedTime: f.modifiedTime ?? null
+      });
+    }
+    pageToken = page.nextPageToken;
+  } while (pageToken);
+  return out;
+}
+async function downloadDriveFile(fileId) {
+  if (!DRIVE_ID_RE.test(fileId)) throw new Error("Invalid Drive file id");
+  const res = await driveFetch(`${DRIVE_API}/files/${fileId}?alt=media&supportsAllDrives=true`);
+  if (!res.ok) throw await failure(res, "download");
+  return Buffer.from(await res.arrayBuffer());
+}
+
+// server/driveMigration.ts
+var CONCURRENCY2 = Math.min(Math.max(Number(process.env.IMAGEFLOW_MIGRATION_CONCURRENCY) || 4, 1), 12);
+var MAX_ATTEMPTS = 8;
+var BACKOFF_S = [30, 60, 120, 300, 600, 900];
+var IDLE_POLL_MS = 15e3;
+var ensurePromise2 = null;
+async function ensureMigrationTables() {
+  if (!isDatabaseConfigured()) return;
+  if (!ensurePromise2) {
+    ensurePromise2 = (async () => {
+      const client = await getPool().connect();
+      try {
+        await client.query("SELECT pg_advisory_lock($1)", [874203153]);
+        try {
+          await client.query(`
+            CREATE TABLE IF NOT EXISTS imageflow_drive_migration_runs (
+              id text PRIMARY KEY,
+              status text NOT NULL,
+              root_folder_id text NOT NULL,
+              root_folder_name text,
+              skip_folders jsonb NOT NULL DEFAULT '[]'::jsonb,
+              plan jsonb,
+              error text,
+              cleanup_checked_in integer NOT NULL DEFAULT 0,
+              cleanup_failed integer NOT NULL DEFAULT 0,
+              started_by text NOT NULL,
+              created_at timestamptz NOT NULL DEFAULT now(),
+              updated_at timestamptz NOT NULL DEFAULT now(),
+              started_at timestamptz,
+              completed_at timestamptz
+            );
+            CREATE TABLE IF NOT EXISTS imageflow_drive_migration_items (
+              id bigserial PRIMARY KEY,
+              run_id text NOT NULL REFERENCES imageflow_drive_migration_runs(id) ON DELETE CASCADE,
+              drive_file_id text NOT NULL,
+              drive_path text NOT NULL,
+              mime_type text,
+              size_bytes bigint,
+              drive_modified_at timestamptz,
+              kind text NOT NULL,
+              dept text,
+              customer text,
+              target_folder text,
+              file_name text,
+              status text NOT NULL,
+              attempts integer NOT NULL DEFAULT 0,
+              next_attempt_at timestamptz NOT NULL DEFAULT now(),
+              locked_until timestamptz,
+              last_error text,
+              sharepoint_item_id text,
+              web_url text,
+              created_at timestamptz NOT NULL DEFAULT now(),
+              updated_at timestamptz NOT NULL DEFAULT now(),
+              UNIQUE (run_id, drive_file_id)
+            );
+            CREATE INDEX IF NOT EXISTS imageflow_drive_migration_items_claim_idx
+              ON imageflow_drive_migration_items (run_id, status, next_attempt_at);
+          `);
+        } finally {
+          await client.query("SELECT pg_advisory_unlock($1)", [874203153]);
+        }
+      } finally {
+        client.release();
+      }
+    })().catch((err) => {
+      ensurePromise2 = null;
+      throw err;
+    });
+  }
+  await ensurePromise2;
+}
+async function latestRun() {
+  const res = await getPool().query(
+    `SELECT * FROM imageflow_drive_migration_runs ORDER BY created_at DESC LIMIT 1`
+  );
+  return res.rows[0] ?? null;
+}
+async function setRun(id, fields) {
+  const keys = Object.keys(fields);
+  const sets = keys.map((k, i) => `${k} = $${i + 2}`);
+  const values = keys.map((k) => {
+    const v = fields[k];
+    return v !== null && typeof v === "object" ? JSON.stringify(v) : v;
+  });
+  await getPool().query(
+    `UPDATE imageflow_drive_migration_runs SET ${sets.join(", ")}, updated_at = now() WHERE id = $1`,
+    [id, ...values]
+  );
+}
+var MigrationConflictError = class extends Error {
+};
+async function startScan(rootFolderId, skipFolders, startedBy) {
+  await ensureMigrationTables();
+  const busy = await getPool().query(
+    `SELECT id, status FROM imageflow_drive_migration_runs WHERE status IN ('scanning','running') LIMIT 1`
+  );
+  if (busy.rows[0]) {
+    throw new MigrationConflictError(`A migration is already ${busy.rows[0].status}. Pause it before scanning again.`);
+  }
+  await getPool().query(
+    `UPDATE imageflow_drive_migration_runs SET status = 'cancelled', updated_at = now() WHERE status IN ('scanned','paused')`
+  );
+  const id = randomUUID3();
+  await getPool().query(
+    `INSERT INTO imageflow_drive_migration_runs (id, status, root_folder_id, skip_folders, started_by)
+     VALUES ($1, 'scanning', $2, $3::jsonb, $4)`,
+    [id, rootFolderId, JSON.stringify(skipFolders), startedBy]
+  );
+  void runScan(id, rootFolderId, skipFolders).catch(async (err) => {
+    console.error("[migration] scan failed:", err);
+    await setRun(id, { status: "failed", error: String(err?.message ?? err).slice(0, 500) }).catch(() => {
+    });
+  });
+  return id;
+}
+async function insertItems(runId, rows) {
+  if (rows.length === 0) return;
+  const values = [];
+  const tuples = rows.map((r, i) => {
+    const b = i * 13;
+    values.push(
+      runId,
+      r.driveFileId,
+      r.drivePath,
+      r.mimeType,
+      r.size,
+      r.modified,
+      r.kind,
+      r.dept,
+      r.customer,
+      r.targetFolder,
+      r.fileName,
+      r.status,
+      r.lastError
+    );
+    return `(${Array.from({ length: 13 }, (_, j) => `$${b + j + 1}`).join(",")})`;
+  });
+  await getPool().query(
+    `INSERT INTO imageflow_drive_migration_items
+       (run_id, drive_file_id, drive_path, mime_type, size_bytes, drive_modified_at, kind,
+        dept, customer, target_folder, file_name, status, last_error)
+     VALUES ${tuples.join(",")}
+     ON CONFLICT (run_id, drive_file_id) DO NOTHING`,
+    values
+  );
+}
+async function runScan(runId, rootFolderId, skipFolders) {
+  const root = await getDriveFolder(rootFolderId);
+  await setRun(runId, { root_folder_name: root.name });
+  const existingByDept = {};
+  for (const dept of DEPARTMENTS) existingByDept[dept] = await listSharePointSubfolders(dept);
+  const { renames, conflicts } = planRenames(existingByDept);
+  const afterRename = {};
+  for (const dept of DEPARTMENTS) {
+    afterRename[dept] = existingByDept[dept].map(
+      (n) => renames.find((r) => r.dept === dept && r.from === n)?.to ?? n
+    );
+  }
+  const skipKeys = new Set(skipFolders.map(nameKey).filter(Boolean));
+  const plan = {
+    rootName: root.name,
+    totals: { files: 0, photos: 0, mapped: 0, oldPhotos: 0, skipped: 0, bytes: 0 },
+    byDept: {},
+    customers: [],
+    oldPhotoFolders: [],
+    skippedReasons: {},
+    skippedTopLevel: [],
+    renames,
+    renameConflicts: conflicts,
+    scanErrors: []
+  };
+  const customers = /* @__PURE__ */ new Map();
+  const oldFolders = /* @__PURE__ */ new Map();
+  const takenNames = /* @__PURE__ */ new Set();
+  let pending = [];
+  const queue = [{ id: root.id, folders: [] }];
+  const walkOne = async (node) => {
+    let children;
+    try {
+      children = await listDriveChildren(node.id);
+    } catch (err) {
+      if (plan.scanErrors.length < 50) plan.scanErrors.push(`${node.folders.join("/") || root.name}: ${err.message}`);
+      return;
+    }
+    for (const child of children) {
+      if (child.mimeType === FOLDER_MIME) {
+        if (node.folders.length === 0 && skipKeys.has(nameKey(child.name))) {
+          plan.skippedTopLevel.push(child.name);
+          continue;
+        }
+        queue.push({ id: child.id, folders: [...node.folders, child.name] });
+        continue;
+      }
+      plan.totals.files++;
+      const drivePath = [...node.folders, child.name].join("/");
+      const cls = classifyDriveFile(child.name, child.mimeType);
+      const base = {
+        driveFileId: child.id,
+        drivePath,
+        mimeType: child.mimeType,
+        size: child.size,
+        modified: child.modifiedTime
+      };
+      if (!cls.copy) {
+        plan.totals.skipped++;
+        plan.skippedReasons[cls.reason] = (plan.skippedReasons[cls.reason] ?? 0) + 1;
+        pending.push({ ...base, kind: "not_photo", dept: null, customer: null, targetFolder: null, fileName: null, status: "skipped", lastError: cls.reason });
+        continue;
+      }
+      plan.totals.photos++;
+      plan.totals.bytes += child.size ?? 0;
+      const target = mapDrivePath(node.folders);
+      if (target.kind === "mapped") {
+        const resolved = resolveCustomerFolder(target.driveCustomer, afterRename[target.dept]);
+        const folder = `${target.dept}/${resolved.name}/${target.workOrder}`;
+        const fileName = uniqueFileName(folder, child.name, takenNames);
+        plan.totals.mapped++;
+        plan.byDept[target.dept] = (plan.byDept[target.dept] ?? 0) + 1;
+        const ck = `${target.dept}|${resolved.name}`;
+        const entry = customers.get(ck) ?? { drive: target.driveCustomer, dept: target.dept, target: resolved.name, existing: resolved.existing, files: 0 };
+        entry.files++;
+        customers.set(ck, entry);
+        pending.push({ ...base, kind: "mapped", dept: target.dept, customer: resolved.name, targetFolder: folder, fileName, status: "pending", lastError: null });
+      } else {
+        const fileName = uniqueFileName(target.folder, child.name, takenNames);
+        plan.totals.oldPhotos++;
+        const group = target.folder.split("/").slice(0, 3).join("/");
+        oldFolders.set(group, (oldFolders.get(group) ?? 0) + 1);
+        pending.push({ ...base, kind: "old_photos", dept: null, customer: null, targetFolder: target.folder, fileName, status: "pending", lastError: null });
+      }
+    }
+    if (pending.length >= 500) {
+      const batch = pending;
+      pending = [];
+      await insertItems(runId, batch);
+    }
+  };
+  let lastBeat = Date.now();
+  while (queue.length > 0) {
+    const batch = queue.splice(0, 4);
+    await Promise.all(batch.map(walkOne));
+    if (Date.now() - lastBeat > 3e4) {
+      lastBeat = Date.now();
+      await getPool().query(`UPDATE imageflow_drive_migration_runs SET updated_at = now() WHERE id = $1`, [runId]);
+    }
+  }
+  await insertItems(runId, pending);
+  plan.customers = Array.from(customers.values()).sort((a, b) => a.target.localeCompare(b.target) || a.dept.localeCompare(b.dept));
+  plan.oldPhotoFolders = Array.from(oldFolders.entries()).map(([path3, files]) => ({ path: path3, files })).sort((a, b) => a.path.localeCompare(b.path));
+  await setRun(runId, { status: "scanned", plan });
+  console.log(`[migration] scan ${runId} done: ${plan.totals.photos} photos (${plan.totals.mapped} mapped, ${plan.totals.oldPhotos} \u2192 Old Photos), ${plan.totals.skipped} skipped`);
+}
+async function startOrResume() {
+  await ensureMigrationTables();
+  const run = await latestRun();
+  if (!run || !["scanned", "paused", "completed"].includes(run.status)) {
+    throw new MigrationConflictError(run ? `Cannot start a run that is ${run.status}.` : "Scan Google Drive first.");
+  }
+  if (run.status === "scanned" && run.plan && !run.plan.renameResults) {
+    const results = [];
+    for (const r of run.plan.renames) {
+      try {
+        await renameSharePointFolder(`${r.dept}/${r.from}`, r.to);
+        results.push({ ...r, ok: true });
+      } catch (err) {
+        results.push({ ...r, ok: false, error: err.message.slice(0, 200) });
+      }
+    }
+    await setRun(run.id, { plan: { ...run.plan, renameResults: results } });
+  }
+  await setRun(run.id, { status: "running", started_at: run.started_at ?? (/* @__PURE__ */ new Date()).toISOString(), completed_at: null });
+  kickMigrationWorker();
+  return await latestRun();
+}
+async function pauseRun() {
+  await ensureMigrationTables();
+  await getPool().query(
+    `UPDATE imageflow_drive_migration_runs SET status = 'paused', updated_at = now() WHERE status = 'running'`
+  );
+}
+async function retryFailed() {
+  await ensureMigrationTables();
+  const run = await latestRun();
+  if (!run) return 0;
+  const res = await getPool().query(
+    `UPDATE imageflow_drive_migration_items
+        SET status = 'pending', attempts = 0, next_attempt_at = now(), last_error = NULL, updated_at = now()
+      WHERE run_id = $1 AND status = 'failed'`,
+    [run.id]
+  );
+  if (run.status === "completed" && (res.rowCount ?? 0) > 0) {
+    await setRun(run.id, { status: "running", completed_at: null });
+    kickMigrationWorker();
+  }
+  return res.rowCount ?? 0;
+}
+var workerActive = false;
+var sweptFolders = /* @__PURE__ */ new Set();
+function kickMigrationWorker() {
+  if (workerActive || !isDatabaseConfigured()) return;
+  workerActive = true;
+  void workerLoop().catch((err) => console.error("[migration] worker crashed:", err)).finally(() => {
+    workerActive = false;
+  });
+}
+function sleep3(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+async function workerLoop() {
+  for (; ; ) {
+    const run = (await getPool().query(
+      `SELECT * FROM imageflow_drive_migration_runs WHERE status = 'running' ORDER BY created_at DESC LIMIT 1`
+    )).rows[0];
+    if (!run) return;
+    const claimed = await getPool().query(
+      `UPDATE imageflow_drive_migration_items
+          SET status = 'copying', attempts = attempts + 1,
+              locked_until = now() + interval '10 minutes', updated_at = now()
+        WHERE id IN (
+          SELECT id FROM imageflow_drive_migration_items
+           WHERE run_id = $1
+             AND ((status = 'pending' AND next_attempt_at <= now())
+               OR (status = 'copying' AND locked_until < now()))
+           ORDER BY id
+           LIMIT $2
+           FOR UPDATE SKIP LOCKED)
+        RETURNING id, run_id, drive_file_id, drive_path, target_folder, file_name, attempts, sharepoint_item_id`,
+      [run.id, CONCURRENCY2]
+    );
+    if (claimed.rows.length === 0) {
+      const left = await getPool().query(
+        `SELECT count(*)::int AS n FROM imageflow_drive_migration_items WHERE run_id = $1 AND status IN ('pending','copying')`,
+        [run.id]
+      );
+      if (left.rows[0].n === 0) {
+        await getPool().query(
+          `UPDATE imageflow_drive_migration_runs SET status = 'completed', completed_at = now(), updated_at = now()
+            WHERE id = $1 AND status = 'running'`,
+          [run.id]
+        );
+        console.log(`[migration] run ${run.id} completed`);
+        return;
+      }
+      await sleep3(IDLE_POLL_MS);
+      continue;
+    }
+    await Promise.all(claimed.rows.map((item) => processItem(item)));
+  }
+}
+async function finishItem(id, status, itemId, webUrl, note = null) {
+  await getPool().query(
+    `UPDATE imageflow_drive_migration_items
+        SET status = $2, sharepoint_item_id = COALESCE($3, sharepoint_item_id), web_url = COALESCE($4, web_url),
+            last_error = $5, locked_until = NULL, updated_at = now()
+      WHERE id = $1`,
+    [id, status, itemId, webUrl, note]
+  );
+}
+async function sweepFolderOnce(runId, folder) {
+  const key = `${runId}|${folder}`;
+  if (sweptFolders.has(key)) return;
+  sweptFolders.add(key);
+  try {
+    const result = await checkInFolderCheckouts(folder);
+    if (result.checkedIn || result.failed) {
+      await getPool().query(
+        `UPDATE imageflow_drive_migration_runs
+            SET cleanup_checked_in = cleanup_checked_in + $2, cleanup_failed = cleanup_failed + $3, updated_at = now()
+          WHERE id = $1`,
+        [runId, result.checkedIn, result.failed]
+      );
+      if (result.errors.length) console.warn(`[migration] cleanup in ${folder}:`, result.errors);
+    }
+  } catch (err) {
+    sweptFolders.delete(key);
+    console.warn(`[migration] cleanup sweep of ${folder} failed:`, err.message);
+  }
+}
+function classifyMigrationError(err) {
+  if (err instanceof DriveApiError) {
+    if (/token request failed/i.test(err.message)) return "blocked";
+    if (err.status === 404) return "permanent";
+    if (err.status === 403) return /rateLimit/i.test(err.message) ? "transient" : "permanent";
+    if (err.status === 400) return "permanent";
+    return "transient";
+  }
+  const kind = classifyUploadError(err);
+  return kind === "checkin" ? "transient" : kind;
+}
+async function processItem(item) {
+  const target = `${item.target_folder}/${item.file_name}`;
+  try {
+    await sweepFolderOnce(item.run_id, item.target_folder);
+    const existing = await lookupSharePointFile(target);
+    if (existing) {
+      let webUrl = existing.webUrl ?? null;
+      if (existing.checkedOut) {
+        webUrl = (await checkInAnyCheckout(existing.id, `ImageFlow migration: ${item.file_name}`)).webUrl ?? webUrl;
+      }
+      await finishItem(item.id, item.sharepoint_item_id ? "done" : "exists", existing.id, webUrl);
+      return;
+    }
+    const bytes = await downloadDriveFile(item.drive_file_id);
+    const uploaded = await uploadFileToSharePointFolder(item.target_folder, item.file_name, bytes);
+    await finishItem(item.id, "done", uploaded.itemId, uploaded.webUrl ?? null);
+  } catch (err) {
+    const message = (err instanceof Error ? err.message : String(err)).slice(0, 500);
+    if (err instanceof SharePointCheckinError) {
+      await getPool().query(
+        `UPDATE imageflow_drive_migration_items
+            SET status = 'pending', sharepoint_item_id = $2, next_attempt_at = now() + interval '120 seconds',
+                last_error = $3, locked_until = NULL, updated_at = now()
+          WHERE id = $1`,
+        [item.id, err.itemId, `Uploaded, check-in pending: ${message}`]
+      );
+      return;
+    }
+    const kind = classifyMigrationError(err);
+    if (kind === "permanent" || item.attempts >= MAX_ATTEMPTS) {
+      await finishItem(item.id, "failed", null, null, message);
+      return;
+    }
+    const delay = kind === "blocked" ? 300 : BACKOFF_S[Math.min(item.attempts - 1, BACKOFF_S.length - 1)];
+    await getPool().query(
+      `UPDATE imageflow_drive_migration_items
+          SET status = 'pending', attempts = attempts - $4, next_attempt_at = now() + ($2 || ' seconds')::interval,
+              last_error = $3, locked_until = NULL, updated_at = now()
+        WHERE id = $1`,
+      [item.id, String(delay), message, kind === "blocked" ? 1 : 0]
+    );
+  }
+}
+async function startDriveMigrationWorker() {
+  if (!isDatabaseConfigured()) return;
+  try {
+    await ensureMigrationTables();
+    await getPool().query(
+      `UPDATE imageflow_drive_migration_runs
+          SET status = 'failed', error = 'Scan interrupted by a restart \u2014 scan again.', updated_at = now()
+        WHERE status = 'scanning' AND updated_at < now() - interval '2 minutes'`
+    );
+    kickMigrationWorker();
+  } catch (err) {
+    console.error("[migration] startup failed:", err);
+  }
+}
+async function getMigrationOverview() {
+  const drive = getDriveReaderStatus();
+  const base = {
+    drive,
+    defaultRootFolderId: process.env.GDRIVE_MIGRATION_ROOT_ID?.trim() || null,
+    workerActive,
+    concurrency: CONCURRENCY2
+  };
+  if (!isDatabaseConfigured()) return { ...base, databaseConfigured: false, run: null };
+  await ensureMigrationTables();
+  const run = await latestRun();
+  if (!run) return { ...base, databaseConfigured: true, run: null };
+  const counts = await getPool().query(
+    `SELECT status, count(*)::int AS n, sum(size_bytes)::text AS bytes
+       FROM imageflow_drive_migration_items WHERE run_id = $1 GROUP BY status`,
+    [run.id]
+  );
+  const byStatus = {};
+  let bytesCopied = 0;
+  for (const row of counts.rows) {
+    byStatus[row.status] = row.n;
+    if (row.status === "done") bytesCopied = Number(row.bytes ?? 0);
+  }
+  return { ...base, databaseConfigured: true, run: { ...run, counts: byStatus, bytesCopied } };
+}
+var SORTS = {
+  drive_path: "drive_path",
+  target: "target_folder",
+  status: "status",
+  size: "size_bytes",
+  attempts: "attempts",
+  updated: "updated_at"
+};
+async function listMigrationItems(opts) {
+  await ensureMigrationTables();
+  const run = await latestRun();
+  if (!run) return { items: [], total: 0, page: 1, pageSize: 50 };
+  const where = ["run_id = $1"];
+  const params = [run.id];
+  if (opts.status && /^[a-z_]+$/.test(opts.status)) {
+    params.push(opts.status);
+    where.push(`status = $${params.length}`);
+  }
+  if (opts.kind && /^[a-z_]+$/.test(opts.kind)) {
+    params.push(opts.kind);
+    where.push(`kind = $${params.length}`);
+  }
+  if (opts.q?.trim()) {
+    params.push(`%${opts.q.trim().replace(/[\\%_]/g, (c) => `\\${c}`)}%`);
+    const p = `$${params.length}`;
+    where.push(`(drive_path ILIKE ${p} OR target_folder ILIKE ${p} OR file_name ILIKE ${p} OR last_error ILIKE ${p})`);
+  }
+  const sortCol = SORTS[opts.sort ?? ""] ?? "id";
+  const dir = opts.dir === "desc" ? "DESC" : "ASC";
+  const pageSize = Math.min(Math.max(opts.pageSize ?? 50, 10), 200);
+  const page = Math.max(opts.page ?? 1, 1);
+  const whereSql = where.join(" AND ");
+  const total = await getPool().query(`SELECT count(*)::int AS n FROM imageflow_drive_migration_items WHERE ${whereSql}`, params);
+  const rows = await getPool().query(
+    `SELECT id, drive_path, kind, target_folder, file_name, status, attempts, last_error, size_bytes, web_url, updated_at
+       FROM imageflow_drive_migration_items
+      WHERE ${whereSql}
+      ORDER BY ${sortCol} ${dir} NULLS LAST, id ASC
+      LIMIT ${pageSize} OFFSET ${(page - 1) * pageSize}`,
+    params
+  );
+  return { items: rows.rows, total: total.rows[0].n, page, pageSize };
+}
+
 // server/routes.ts
 var JOB_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 var MAX_STATUS_IDS = 100;
@@ -2648,6 +3470,88 @@ async function registerRoutes(app2) {
     const mode = String(req.query.mode || req.body?.mode || "recent") === "full" ? "full" : "recent";
     void runCheckinSweep(mode);
     res.status(202).json({ started: true, mode, lastSweep: getUploadWorkerStatus().lastSweep });
+  });
+  const requireMigrationAdmin = (req, res) => {
+    if (!isImageflowAdmin(req)) {
+      res.status(403).json({ error: "Admin only" });
+      return false;
+    }
+    if (!isDatabaseConfigured()) {
+      res.status(503).json({ error: "DATABASE_URL not set" });
+      return false;
+    }
+    return true;
+  };
+  const migrationError = (res, error) => {
+    if (error instanceof MigrationConflictError) return res.status(409).json({ error: error.message });
+    console.error("[migration] request failed:", error);
+    res.status(500).json({ error: error?.message || String(error) });
+  };
+  app2.get("/api/admin/drive-migration", requireImageflow, async (req, res) => {
+    if (!isImageflowAdmin(req)) return res.status(403).json({ error: "Admin only" });
+    try {
+      res.json(await getMigrationOverview());
+    } catch (error) {
+      migrationError(res, error);
+    }
+  });
+  app2.post("/api/admin/drive-migration/scan", requireImageflow, async (req, res) => {
+    if (!requireMigrationAdmin(req, res)) return;
+    if (!getDriveReaderStatus().configured) {
+      return res.status(400).json({ error: "GOOGLE_SERVICE_ACCOUNT_JSON is not configured on the server." });
+    }
+    const folderId = parseDriveFolderId(String(req.body?.rootFolder ?? process.env.GDRIVE_MIGRATION_ROOT_ID ?? ""));
+    if (!folderId) return res.status(400).json({ error: "Enter the Google Drive folder link or ID of the ACE folder." });
+    const skip = Array.isArray(req.body?.skipFolders) ? req.body.skipFolders.map((s) => String(s).trim().slice(0, 200)).filter(Boolean).slice(0, 200) : [];
+    try {
+      const runId = await startScan(folderId, skip, req.aceSsoUser?.email || userIdOf(req) || "unknown");
+      res.status(202).json({ runId });
+    } catch (error) {
+      migrationError(res, error);
+    }
+  });
+  app2.post("/api/admin/drive-migration/start", requireImageflow, async (req, res) => {
+    if (!requireMigrationAdmin(req, res)) return;
+    try {
+      res.json(await startOrResume());
+    } catch (error) {
+      migrationError(res, error);
+    }
+  });
+  app2.post("/api/admin/drive-migration/pause", requireImageflow, async (req, res) => {
+    if (!requireMigrationAdmin(req, res)) return;
+    try {
+      await pauseRun();
+      res.json({ paused: true });
+    } catch (error) {
+      migrationError(res, error);
+    }
+  });
+  app2.post("/api/admin/drive-migration/retry-failed", requireImageflow, async (req, res) => {
+    if (!requireMigrationAdmin(req, res)) return;
+    try {
+      res.json({ retried: await retryFailed() });
+    } catch (error) {
+      migrationError(res, error);
+    }
+  });
+  app2.get("/api/admin/drive-migration/items", requireImageflow, async (req, res) => {
+    if (!requireMigrationAdmin(req, res)) return;
+    try {
+      res.json(
+        await listMigrationItems({
+          status: req.query.status ? String(req.query.status) : void 0,
+          kind: req.query.kind ? String(req.query.kind) : void 0,
+          q: req.query.q ? String(req.query.q).slice(0, 200) : void 0,
+          sort: req.query.sort ? String(req.query.sort) : void 0,
+          dir: req.query.dir ? String(req.query.dir) : void 0,
+          page: Number(req.query.page) || 1,
+          pageSize: Number(req.query.pageSize) || 50
+        })
+      );
+    } catch (error) {
+      migrationError(res, error);
+    }
   });
   app2.get("/api/upload-history", requireImageflow, async (req, res) => {
     try {
@@ -3374,6 +4278,7 @@ app.post(
       initializeScheduler();
       startUploadWorker();
       startUploadMonitor();
+      void startDriveMigrationWorker();
     }
   );
 })();

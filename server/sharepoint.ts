@@ -27,7 +27,7 @@ const CLIENT_ASSERTION_TYPE =
  * SharePoint/OneDrive folder & file names cannot contain <>:"/\|?*
  * and must not start/end with a space or period (e.g. "CACI TECHNOLOGIES, INC.").
  */
-function sanitizePathSegment(value: string): string {
+export function sanitizePathSegment(value: string): string {
   let name = value
     .replace(/[<>:"/\\|?*#%\x00-\x1f]/g, "_")
     .replace(/\s+/g, " ")
@@ -808,13 +808,25 @@ export async function uploadFileToSharePoint(
   workOrderNumber: string,
   fileName: string,
   fileBuffer: Buffer,
-): Promise<{
+): Promise<SharePointUploadResult> {
+  const folderPath = [dept, customerName, workOrderNumber].map(sanitizePathSegment).join("/");
+  return uploadFileToSharePointFolder(folderPath, sanitizePathSegment(fileName), fileBuffer);
+}
+
+export type SharePointUploadResult = {
   success: true;
   path: string;
   itemId: string;
   webUrl?: string;
   timings: SharePointUploadTimings;
-}> {
+};
+
+/** Upload + strict check-in into an already-sanitized folder path ("A/B/C"). */
+export async function uploadFileToSharePointFolder(
+  folderPath: string,
+  sanitizedFile: string,
+  fileBuffer: Buffer,
+): Promise<SharePointUploadResult> {
   const startedAt = Date.now();
   let mark = startedAt;
   const lap = () => {
@@ -829,12 +841,6 @@ export async function uploadFileToSharePoint(
   const siteId = await resolveSiteId();
   const driveId = await resolveDriveId(siteId);
   const siteMs = lap();
-
-  const sanitizedCustomer = sanitizePathSegment(customerName);
-  const sanitizedDept = sanitizePathSegment(dept);
-  const sanitizedWo = sanitizePathSegment(workOrderNumber);
-  const sanitizedFile = sanitizePathSegment(fileName);
-  const folderPath = `${sanitizedDept}/${sanitizedCustomer}/${sanitizedWo}`;
 
   await ensureFolderPath(driveId, folderPath);
   const folderMs = lap();
@@ -932,6 +938,102 @@ export async function retryCheckIn(
   const fileName = itemPath.split("/").pop() || itemPath;
   const result = await checkInAndVerify(driveId, id, `ImageFlow upload: ${fileName}`);
   return { itemId: id, webUrl: result.webUrl };
+}
+
+export type SharePointFileState = { id: string; webUrl?: string; checkedOut: boolean };
+
+/** Look up a file by path ("Dept/Customer/WO/name.jpg"); null when it does not exist. */
+export async function lookupSharePointFile(itemPath: string): Promise<SharePointFileState | null> {
+  const driveId = await resolveDrive();
+  const segments = itemPath.split("/").filter(Boolean);
+  const res = await graphFetchWithRetry(`/drives/${driveId}/root:/${driveItemPath(segments)}?${PUBLICATION_SELECT}`);
+  if (res.status === 404) {
+    await res.text().catch(() => "");
+    return null;
+  }
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Failed to look up SharePoint item ${itemPath} (${res.status}): ${text.slice(0, 200)}` + sitesPermissionHint(res.status, text));
+  }
+  const item = (await res.json()) as ItemPublication;
+  return { id: item.id, webUrl: item.webUrl, checkedOut: isCheckedOut(item) };
+}
+
+/** Check in an item whoever holds the checkout (migration cleanup chosen by the operator). */
+export async function checkInAnyCheckout(itemId: string, comment: string): Promise<{ webUrl?: string }> {
+  const driveId = await resolveDrive();
+  return checkInAndVerify(driveId, itemId, comment);
+}
+
+type FolderChild = ItemPublication & { name: string; folder?: unknown; file?: unknown };
+
+/** Children of a folder path; [] when the folder does not exist. */
+async function listChildrenByPath(folderPath: string): Promise<FolderChild[]> {
+  const driveId = await resolveDrive();
+  const segments = folderPath.split("/").filter(Boolean);
+  const select = "$select=id,name,webUrl,folder,file,publication,lastModifiedBy&$top=200";
+  let url: string | null =
+    segments.length === 0
+      ? `/drives/${driveId}/root/children?${select}`
+      : `/drives/${driveId}/root:/${driveItemPath(segments)}:/children?${select}`;
+  const out: FolderChild[] = [];
+  while (url) {
+    const res = await graphFetchWithRetry(url);
+    if (res.status === 404) {
+      await res.text().catch(() => "");
+      return [];
+    }
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new Error(`Failed to list SharePoint folder ${folderPath} (${res.status}): ${text.slice(0, 200)}` + sitesPermissionHint(res.status, text));
+    }
+    const page = (await res.json()) as { value?: FolderChild[]; "@odata.nextLink"?: string };
+    out.push(...(page.value ?? []));
+    url = page["@odata.nextLink"] ?? null;
+  }
+  return out;
+}
+
+export async function listSharePointSubfolders(folderPath: string): Promise<string[]> {
+  return (await listChildrenByPath(folderPath)).filter((c) => c.folder).map((c) => c.name);
+}
+
+/** Check in every checked-out file directly inside a folder (any user's checkout). */
+export async function checkInFolderCheckouts(folderPath: string): Promise<CheckinSweepResult> {
+  const driveId = await resolveDrive();
+  const result = emptySweep();
+  for (const child of await listChildrenByPath(folderPath)) {
+    if (!child.file) continue;
+    result.scanned++;
+    if (!isCheckedOut(child)) continue;
+    result.checkedOutByApp++;
+    try {
+      await checkInAndVerify(driveId, child.id, "ImageFlow migration: check in leftover checkout");
+      result.checkedIn++;
+    } catch (err) {
+      result.failed++;
+      if (result.errors.length < 10) result.errors.push(`${child.name}: ${(err as Error).message.slice(0, 200)}`);
+    }
+  }
+  return result;
+}
+
+/** Rename a folder in place; fails (409) if the new name already exists. */
+export async function renameSharePointFolder(folderPath: string, newName: string): Promise<void> {
+  const driveId = await resolveDrive();
+  const segments = folderPath.split("/").filter(Boolean);
+  const res = await graphFetchWithRetry(`/drives/${driveId}/root:/${driveItemPath(segments)}`, {
+    method: "PATCH",
+    body: JSON.stringify({ name: newName, "@microsoft.graph.conflictBehavior": "fail" }),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Failed to rename ${folderPath} → ${newName} (${res.status}): ${text.slice(0, 200)}`);
+  }
+  await res.text().catch(() => "");
+  for (const key of Array.from(ensuredFolders)) {
+    if (key.includes(`:${folderPath}`)) ensuredFolders.delete(key);
+  }
 }
 
 /** Only touch files the app itself left checked out — never a person's checkout. */

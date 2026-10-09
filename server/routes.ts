@@ -19,6 +19,16 @@ import {
   stageUploadJob,
 } from "./uploadJobs";
 import { getUploadWorkerStatus, kickUploadWorker, runCheckinSweep } from "./uploadWorker";
+import {
+  MigrationConflictError,
+  getMigrationOverview,
+  listMigrationItems,
+  pauseRun,
+  retryFailed,
+  startOrResume,
+  startScan,
+} from "./driveMigration";
+import { getDriveReaderStatus, parseDriveFolderId } from "./googleDriveReader";
 
 const JOB_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const MAX_STATUS_IDS = 100;
@@ -318,6 +328,98 @@ export async function registerRoutes(app: Express): Promise<Server> {
     const mode = String(req.query.mode || req.body?.mode || "recent") === "full" ? "full" : "recent";
     void runCheckinSweep(mode);
     res.status(202).json({ started: true, mode, lastSweep: getUploadWorkerStatus().lastSweep });
+  });
+
+  // Admin: one-time Google Drive → SharePoint photo migration.
+  const requireMigrationAdmin = (req: AceAuthRequest, res: any): boolean => {
+    if (!isImageflowAdmin(req)) {
+      res.status(403).json({ error: "Admin only" });
+      return false;
+    }
+    if (!isDatabaseConfigured()) {
+      res.status(503).json({ error: "DATABASE_URL not set" });
+      return false;
+    }
+    return true;
+  };
+  const migrationError = (res: any, error: any) => {
+    if (error instanceof MigrationConflictError) return res.status(409).json({ error: error.message });
+    console.error("[migration] request failed:", error);
+    res.status(500).json({ error: error?.message || String(error) });
+  };
+
+  app.get("/api/admin/drive-migration", requireImageflow, async (req: AceAuthRequest, res) => {
+    if (!isImageflowAdmin(req)) return res.status(403).json({ error: "Admin only" });
+    try {
+      res.json(await getMigrationOverview());
+    } catch (error) {
+      migrationError(res, error);
+    }
+  });
+
+  app.post("/api/admin/drive-migration/scan", requireImageflow, async (req: AceAuthRequest, res) => {
+    if (!requireMigrationAdmin(req, res)) return;
+    if (!getDriveReaderStatus().configured) {
+      return res.status(400).json({ error: "GOOGLE_SERVICE_ACCOUNT_JSON is not configured on the server." });
+    }
+    const folderId = parseDriveFolderId(String(req.body?.rootFolder ?? process.env.GDRIVE_MIGRATION_ROOT_ID ?? ""));
+    if (!folderId) return res.status(400).json({ error: "Enter the Google Drive folder link or ID of the ACE folder." });
+    const skip = Array.isArray(req.body?.skipFolders)
+      ? req.body.skipFolders.map((s: unknown) => String(s).trim().slice(0, 200)).filter(Boolean).slice(0, 200)
+      : [];
+    try {
+      const runId = await startScan(folderId, skip, req.aceSsoUser?.email || userIdOf(req) || "unknown");
+      res.status(202).json({ runId });
+    } catch (error) {
+      migrationError(res, error);
+    }
+  });
+
+  app.post("/api/admin/drive-migration/start", requireImageflow, async (req: AceAuthRequest, res) => {
+    if (!requireMigrationAdmin(req, res)) return;
+    try {
+      res.json(await startOrResume());
+    } catch (error) {
+      migrationError(res, error);
+    }
+  });
+
+  app.post("/api/admin/drive-migration/pause", requireImageflow, async (req: AceAuthRequest, res) => {
+    if (!requireMigrationAdmin(req, res)) return;
+    try {
+      await pauseRun();
+      res.json({ paused: true });
+    } catch (error) {
+      migrationError(res, error);
+    }
+  });
+
+  app.post("/api/admin/drive-migration/retry-failed", requireImageflow, async (req: AceAuthRequest, res) => {
+    if (!requireMigrationAdmin(req, res)) return;
+    try {
+      res.json({ retried: await retryFailed() });
+    } catch (error) {
+      migrationError(res, error);
+    }
+  });
+
+  app.get("/api/admin/drive-migration/items", requireImageflow, async (req: AceAuthRequest, res) => {
+    if (!requireMigrationAdmin(req, res)) return;
+    try {
+      res.json(
+        await listMigrationItems({
+          status: req.query.status ? String(req.query.status) : undefined,
+          kind: req.query.kind ? String(req.query.kind) : undefined,
+          q: req.query.q ? String(req.query.q).slice(0, 200) : undefined,
+          sort: req.query.sort ? String(req.query.sort) : undefined,
+          dir: req.query.dir ? String(req.query.dir) : undefined,
+          page: Number(req.query.page) || 1,
+          pageSize: Number(req.query.pageSize) || 50,
+        }),
+      );
+    } catch (error) {
+      migrationError(res, error);
+    }
   });
 
   app.get("/api/upload-history", requireImageflow, async (req: AceAuthRequest, res) => {

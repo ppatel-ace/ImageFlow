@@ -11,6 +11,7 @@ import { getSharePointEnvStatus } from "./sharepoint";
 import { getUploadWorkerStatus, startUploadWorker } from "./uploadWorker";
 import { getUploadQueueSnapshot, startUploadMonitor } from "./uploadMonitor";
 import { getBuildInfo } from "./buildInfo";
+import { startDriveMigrationWorker } from "./driveMigration";
 import path from "path";
 import fs from "fs";
 import { fileURLToPath } from "url";
@@ -211,6 +212,7 @@ app.post(
       initializeScheduler();
       startUploadWorker();
       startUploadMonitor();
+      void startDriveMigrationWorker();
     },
   );
 })();

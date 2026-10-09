@@ -8,6 +8,7 @@ import { ThemeProvider } from "@/hooks/use-theme";
 import { AuthProvider, useAuth } from "@/lib/auth";
 import { AceUsageBeacon } from "@/components/AceUsageBeacon";
 import HomePage from "@/pages/HomePage";
+import DriveMigrationPage from "@/pages/DriveMigrationPage";
 import LoginPage from "@/pages/LoginPage";
 import NotFound from "@/pages/not-found";
 
@@ -15,6 +16,7 @@ function Router() {
   return (
     <Switch>
       <Route path="/" component={HomePage} />
+      <Route path="/admin/drive-migration" component={DriveMigrationPage} />
       <Route component={NotFound} />
     </Switch>
   );

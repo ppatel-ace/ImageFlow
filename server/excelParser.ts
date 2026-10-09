@@ -2,6 +2,7 @@ import { readSheet } from 'read-excel-file/node';
 import { readdirSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
+import { decodeEntities } from './driveMigrationPlan';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -28,7 +29,8 @@ export async function parseExcelFile(filePath: string): Promise<WorkOrderData[]>
 
     // Open Orders layout: SalesOrderNo, BillToName, ItemCode, UDF_REV
     const workOrder = row[4] != null ? String(row[4]).trim() : '';
-    const customerName = row[6] != null ? String(row[6]).trim() : '';
+    // ERP export HTML-encodes names ("B&amp;P"); undecoded they become SharePoint folder names.
+    const customerName = row[6] != null ? decodeEntities(String(row[6])).trim() : '';
     const rev = row[14] != null ? String(row[14]).trim() : '';
     const partNumber = row[9] != null ? String(row[9]).trim() : '';
 
