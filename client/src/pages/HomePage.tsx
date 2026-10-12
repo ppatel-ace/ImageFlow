@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import ImageUploadForm from "@/components/ImageUploadForm";
 import { startUploadRunner } from "@/lib/uploadQueue";
 import UploadHistoryPanel from "@/components/UploadHistoryPanel";
@@ -8,9 +8,33 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAuth, userInitials } from "@/lib/auth";
 import { getHubAppsUrl } from "@/lib/hub";
 import { AceAppVersionFooter } from "@/components/AceAppVersionFooter";
-import { AceBacklogPanel } from "@/components/AceBacklogPanel";
-import { AceDesignPanel } from "@/components/AceDesignPanel";
 import { trackFeature } from "@/components/AceUsageBeacon";
+
+type BuildInfo = { sha: string; sourceHash: string | null; builtAt: string | null };
+
+/** Which server build this tablet is talking to (BUILD_INFO.json via /health). */
+function BuildStamp() {
+  const [build, setBuild] = useState<BuildInfo | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/health", { credentials: "include" })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (!cancelled && data?.build) setBuild(data.build as BuildInfo);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  if (!build) return null;
+  const built = build.builtAt ? new Date(build.builtAt).toLocaleString() : "dev";
+  return (
+    <p className="mt-1 text-[11px] text-muted-foreground/70" data-testid="text-build-stamp">
+      Build {build.sourceHash ?? build.sha} · {built}
+    </p>
+  );
+}
 
 export default function HomePage() {
   const auth = useAuth();
@@ -119,15 +143,6 @@ export default function HomePage() {
         </Tabs>
       </main>
 
-      <div className="mx-auto w-full max-w-7xl space-y-4 px-3 pb-4 sm:px-4 md:px-6">
-        <div className="rounded-lg border border-border p-4">
-          <AceBacklogPanel appSlug="imageflow" compact />
-        </div>
-        <div className="rounded-lg border border-border p-4">
-          <AceDesignPanel appSlug="imageflow" compact />
-        </div>
-      </div>
-
       <footer className="border-t border-border py-4 text-center">
         <AceAppVersionFooter
           appSlug="imageflow"
@@ -135,6 +150,7 @@ export default function HomePage() {
           fallbackVersion="1.1.0"
           className="text-xs text-muted-foreground"
         />
+        <BuildStamp />
       </footer>
     </div>
   );

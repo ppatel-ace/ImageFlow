@@ -3220,6 +3220,135 @@ async function listMigrationItems(opts) {
   return { items: rows.rows, total: total.rows[0].n, page, pageSize };
 }
 
+// server/partOverrides.ts
+var MAX_PART = 100;
+var MAX_REV = 20;
+var NON_PART_RE = /SERVICE\s*CHARGE|FREIGHT|EXPEDITE/i;
+function normalize(code) {
+  return code.toUpperCase().replace(/\s+/g, "");
+}
+function nonPartCodes() {
+  const raw = process.env.IMAGEFLOW_NON_PART_CODES?.trim() || "CCSERVICECHARGE";
+  return new Set(raw.split(",").map((c) => normalize(c)).filter(Boolean));
+}
+function isNonPartCode(code) {
+  return nonPartCodes().has(normalize(code)) || NON_PART_RE.test(code);
+}
+var ensurePromise3 = null;
+async function ensurePartOverridesTable() {
+  if (!isDatabaseConfigured()) return;
+  if (!ensurePromise3) {
+    ensurePromise3 = (async () => {
+      const client = await getPool().connect();
+      try {
+        await client.query("SELECT pg_advisory_lock($1)", [874203154]);
+        try {
+          await client.query(`
+            CREATE TABLE IF NOT EXISTS imageflow_part_overrides (
+              id bigserial PRIMARY KEY,
+              work_order_number text NOT NULL,
+              part_number text NOT NULL,
+              rev text NOT NULL DEFAULT '',
+              customer_name text NOT NULL DEFAULT '',
+              created_by_id text NOT NULL,
+              created_by_email text NOT NULL DEFAULT '',
+              created_by_name text NOT NULL DEFAULT '',
+              created_at timestamptz NOT NULL DEFAULT now(),
+              last_used_at timestamptz NOT NULL DEFAULT now(),
+              use_count integer NOT NULL DEFAULT 1,
+              UNIQUE (work_order_number, part_number, rev)
+            );
+          `);
+        } finally {
+          await client.query("SELECT pg_advisory_unlock($1)", [874203154]);
+        }
+      } finally {
+        client.release();
+      }
+    })().catch((err) => {
+      ensurePromise3 = null;
+      throw err;
+    });
+  }
+  await ensurePromise3;
+}
+function sameKey(a, b) {
+  return normalize(a.partNumber) === normalize(b.partNumber) && normalize(a.rev) === normalize(b.rev);
+}
+async function listPartOptions(workOrder, viewer) {
+  const excel = getPartNumbersByWorkOrder(workOrder).map((p) => ({
+    ...p,
+    source: "excel",
+    nonPart: isNonPartCode(p.partNumber)
+  }));
+  if (!isDatabaseConfigured()) return excel;
+  let rows = [];
+  try {
+    await ensurePartOverridesTable();
+    rows = (await getPool().query(
+      `SELECT id::text AS id, part_number, rev, customer_name, created_by_id, created_by_name
+           FROM imageflow_part_overrides
+          WHERE work_order_number = $1
+          ORDER BY last_used_at DESC
+          LIMIT 50`,
+      [workOrder]
+    )).rows;
+  } catch (err) {
+    console.warn("[parts] could not read manual part numbers:", err.message);
+  }
+  const manual = rows.map((r) => ({
+    partNumber: r.part_number,
+    rev: r.rev,
+    customerName: r.customer_name || excel[0]?.customerName || "",
+    source: "manual",
+    nonPart: false,
+    id: r.id,
+    addedBy: r.created_by_name,
+    canDelete: viewer.isAdmin || viewer.userId !== null && viewer.userId === r.created_by_id
+  })).filter((m) => !excel.some((e) => sameKey(e, m)));
+  return [...excel, ...manual];
+}
+async function recordManualPart(input) {
+  if (!isDatabaseConfigured()) return "skipped";
+  const workOrder = input.workOrderNumber.trim();
+  const partNumber = input.partNumber.trim().slice(0, MAX_PART);
+  const rev = input.rev.trim().slice(0, MAX_REV);
+  if (!workOrder || !partNumber || isNonPartCode(partNumber)) return "skipped";
+  const excel = getPartNumbersByWorkOrder(workOrder);
+  if (excel.some((e) => sameKey(e, { partNumber, rev }))) return "skipped";
+  await ensurePartOverridesTable();
+  await getPool().query(
+    `INSERT INTO imageflow_part_overrides
+       (work_order_number, part_number, rev, customer_name, created_by_id, created_by_email, created_by_name)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
+     ON CONFLICT (work_order_number, part_number, rev)
+     DO UPDATE SET use_count = imageflow_part_overrides.use_count + 1,
+                   last_used_at = now(),
+                   customer_name = EXCLUDED.customer_name`,
+    [workOrder, partNumber, rev, input.customerName.trim().slice(0, 200), input.userId, input.userEmail, input.userName]
+  );
+  return "saved";
+}
+async function recordManualPartSafely(input) {
+  try {
+    await recordManualPart(input);
+  } catch (err) {
+    console.warn("[parts] could not save manual part number:", err.message);
+  }
+}
+async function deleteManualPart(workOrder, id, viewer) {
+  await ensurePartOverridesTable();
+  const found = await getPool().query(
+    `SELECT created_by_id FROM imageflow_part_overrides WHERE id = $1 AND work_order_number = $2`,
+    [id, workOrder]
+  );
+  const row = found.rows[0];
+  if (!row) return "not_found";
+  if (!viewer.isAdmin && viewer.userId !== row.created_by_id) return "forbidden";
+  await getPool().query(`DELETE FROM imageflow_part_overrides WHERE id = $1`, [id]);
+  return "deleted";
+}
+
 // server/routes.ts
 var JOB_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 var MAX_STATUS_IDS = 100;
@@ -3304,6 +3433,15 @@ async function handleStageJob(req, res) {
       return res.status(409).json({ error: "Job id already used" });
     }
     if (staged.created) {
+      await recordManualPartSafely({
+        workOrderNumber: String(workOrderNumber),
+        partNumber: String(partNumber ?? ""),
+        rev: String(rev ?? ""),
+        customerName: String(customerName),
+        userId,
+        userEmail: user.email || "",
+        userName: user.name || user.email || "Unknown User"
+      });
       console.log(
         `[upload] staged ${JSON.stringify({ id: staged.row.id, bytes: req.file.size, receivedMs: Date.now() - (req.imageflowStartedAt ?? Date.now()) })}`
       );
@@ -3367,6 +3505,15 @@ async function handleImageUpload(req, res) {
       req.file.buffer
     );
     const user = req.aceSsoUser;
+    await recordManualPartSafely({
+      workOrderNumber: String(workOrderNumber),
+      partNumber: String(partNumber ?? ""),
+      rev: String(rev ?? ""),
+      customerName: String(customerName),
+      userId: user?.id || user?.sub || "unknown",
+      userEmail: user?.email || "",
+      userName: user?.name || user?.email || "Unknown User"
+    });
     try {
       await recordUploadHistory({
         workOrderNumber: String(workOrderNumber),
@@ -3597,10 +3744,29 @@ async function registerRoutes(app2) {
     try {
       await ensureWorkOrderDataLoaded();
       const { workOrder } = req.params;
-      res.json(getPartNumbersByWorkOrder(workOrder));
+      res.json(await listPartOptions(workOrder, { userId: userIdOf(req), isAdmin: isImageflowAdmin(req) }));
     } catch (error) {
       console.error("Error fetching part numbers:", error);
       res.status(500).json({ error: "Failed to fetch part numbers" });
+    }
+  });
+  app2.delete("/api/part-numbers/:workOrder/manual/:id", requireImageflow, async (req, res) => {
+    if (!isDatabaseConfigured()) return res.status(503).json({ error: "DATABASE_URL not set" });
+    const id = String(req.params.id || "");
+    if (!/^\d{1,18}$/.test(id)) return res.status(400).json({ error: "Invalid id" });
+    try {
+      const result = await deleteManualPart(req.params.workOrder, id, {
+        userId: userIdOf(req),
+        isAdmin: isImageflowAdmin(req)
+      });
+      if (result === "not_found") return res.status(404).json({ error: "Not found" });
+      if (result === "forbidden") {
+        return res.status(403).json({ error: "Only the person who added this part number or an admin can remove it" });
+      }
+      res.json({ deleted: true });
+    } catch (error) {
+      console.error("[parts] delete failed:", error);
+      res.status(500).json({ error: error?.message || "Delete failed" });
     }
   });
   app2.get("/api/excel-info", requireImageflow, (req, res) => {

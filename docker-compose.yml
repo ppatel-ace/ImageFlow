@@ -30,6 +30,8 @@ services:
       IMAGEFLOW_UPLOAD_WORKER: ${IMAGEFLOW_UPLOAD_WORKER:-true}
       # Teams incoming-webhook / Workflows URL for stuck, blocked or not-checked-in uploads
       IMAGEFLOW_ALERT_WEBHOOK: ${IMAGEFLOW_ALERT_WEBHOOK:-}
+      # Sage line codes that are charges, not parts (comma list; Service charge/Freight/Expedite always match)
+      IMAGEFLOW_NON_PART_CODES: ${IMAGEFLOW_NON_PART_CODES:-CCSERVICECHARGE}
       # Google Drive → SharePoint photo migration (/admin/drive-migration). Service-account JSON key, raw or base64.
       GOOGLE_SERVICE_ACCOUNT_JSON: ${GOOGLE_SERVICE_ACCOUNT_JSON:-}
       GDRIVE_MIGRATION_ROOT_ID: ${GDRIVE_MIGRATION_ROOT_ID:-}

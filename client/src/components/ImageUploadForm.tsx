@@ -10,7 +10,7 @@ import { Card } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Command, CommandEmpty, CommandGroup, CommandItem, CommandList } from "@/components/ui/command";
-import { Camera, Upload, FolderOpen, CheckCircle2, Loader2, Image as ImageIcon, Download, Check, RefreshCw, ChevronsUpDown } from "lucide-react";
+import { Camera, Upload, FolderOpen, CheckCircle2, Loader2, Image as ImageIcon, Download, Check, RefreshCw, ChevronsUpDown, X } from "lucide-react";
 import { format } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -48,7 +48,7 @@ const sanitizePath = (value: string): string => {
 const uploadFormSchema = z.object({
   dept: z.string().min(1, "Dept is required"),
   partNumber: z.string().min(1, "Part # is required"),
-  rev: z.string().min(1, "Rev. is required"),
+  rev: z.string(),
   customerName: z.string().min(1, "Customer name is required"),
   workOrderNumber: z.string().min(1, "Work Order # is required"),
 });
@@ -82,9 +82,24 @@ function nextCapturedAt(): string {
   return format(new Date(now), "yyyyMMdd-HHmmss-SSS");
 }
 
+/** Blank Rev → "PARTRev-<time>", the same shape as the legacy Drive file names. */
 function buildDefaultStem(part: string, rev: string, capturedAt: string): string {
-  return `${sanitizePath(part || "image")}Rev${sanitizePath(rev || "0")}-${capturedAt}`;
+  const cleanRev = rev.trim() ? sanitizePath(rev) : "";
+  return `${sanitizePath(part || "image")}Rev${cleanRev}-${capturedAt}`;
 }
+
+type PartOption = {
+  partNumber: string;
+  rev: string;
+  customerName: string;
+  source?: "excel" | "manual";
+  nonPart?: boolean;
+  id?: string;
+  addedBy?: string;
+  canDelete?: boolean;
+};
+
+const partKey = (value: string) => value.trim().toUpperCase().replace(/\s+/g, "");
 
 function fileExtension(file: Blob): string {
   const name = file instanceof File ? file.name : "";
@@ -174,7 +189,9 @@ export default function ImageUploadForm() {
   const storageWarnedRef = useRef(false);
   const imagesRef = useRef<CapturedImage[]>(capturedImages);
   imagesRef.current = capturedImages;
-  const [partNumberOptions, setPartNumberOptions] = useState<{ partNumber: string; rev: string; customerName: string }[]>([]);
+  const [partNumberOptions, setPartNumberOptions] = useState<PartOption[]>([]);
+  const [partsVersion, setPartsVersion] = useState(0);
+  const partInputRef = useRef<HTMLInputElement>(null);
   const [workOrderOpen, setWorkOrderOpen] = useState(false);
   const [workOrderSearch, setWorkOrderSearch] = useState("");
   const [partNumberOpen, setPartNumberOpen] = useState(false);
@@ -267,20 +284,76 @@ export default function ImageUploadForm() {
       return;
     }
 
-    fetch(`/api/part-numbers/${encodeURIComponent(workOrderNumber)}`)
+    let cancelled = false;
+    fetch(`/api/part-numbers/${encodeURIComponent(workOrderNumber)}`, { credentials: "include" })
       .then(res => res.ok ? res.json() : [])
-      .then(data => {
+      .then((data: PartOption[]) => {
+        if (cancelled) return;
         setPartNumberOptions(data);
-        if (data.length === 1) {
-          const part = data[0];
+        if (data[0]?.customerName && !form.getValues("customerName")) {
+          form.setValue("customerName", data[0].customerName);
+        }
+        if (form.getValues("partNumber")) return;
+        // Never auto-fill a service-charge line; if that's all Sage has, ask for the real part.
+        const real = data.filter((p) => !p.nonPart);
+        if (real.length === 1) {
+          const part = real[0];
           form.setValue("partNumber", part.partNumber);
           form.setValue("rev", part.rev || "");
           form.setValue("customerName", part.customerName || "");
           setPartNumberSearch(part.partNumber);
+        } else if (data.length > 0 && real.length === 0) {
+          setTimeout(() => partInputRef.current?.focus(), 0);
         }
       })
-      .catch(() => setPartNumberOptions([]));
-  }, [workOrderNumber, prevWorkOrder, form]);
+      .catch(() => {
+        if (!cancelled) setPartNumberOptions([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [workOrderNumber, prevWorkOrder, form, partsVersion]);
+
+  const listedPart = partNumberOptions.find((p) => partKey(p.partNumber) === partKey(partNumber || ""));
+  const isManualPart = Boolean(partNumber?.trim()) && !listedPart;
+  const onlyServiceLines = partNumberOptions.length > 0 && partNumberOptions.every((p) => p.nonPart);
+
+  const handlePartNumberTyped = (value: string) => {
+    const wasListed = partNumberOptions.some((p) => partKey(p.partNumber) === partKey(partNumber || ""));
+    const match = partNumberOptions.find((p) => partKey(p.partNumber) === partKey(value));
+    setPartNumberSearch(value);
+    form.setValue("partNumber", value);
+    if (match) {
+      form.setValue("rev", match.rev || "");
+      if (match.customerName) form.setValue("customerName", match.customerName);
+    } else {
+      if (wasListed) form.setValue("rev", "");
+      if (!form.getValues("customerName") && partNumberOptions[0]?.customerName) {
+        form.setValue("customerName", partNumberOptions[0].customerName);
+      }
+    }
+    setPartNumberOpen(true);
+  };
+
+  const removeManualPart = async (part: PartOption) => {
+    if (!part.id || !workOrderNumber) return;
+    try {
+      const res = await fetch(
+        `/api/part-numbers/${encodeURIComponent(workOrderNumber)}/manual/${encodeURIComponent(part.id)}`,
+        { method: "DELETE", credentials: "include" },
+      );
+      if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.error || `HTTP ${res.status}`);
+      if (partKey(part.partNumber) === partKey(partNumber || "")) {
+        form.setValue("partNumber", "");
+        form.setValue("rev", "");
+        setPartNumberSearch("");
+      }
+      setPartsVersion((v) => v + 1);
+      toast({ title: `Removed ${part.partNumber} from WO ${workOrderNumber}` });
+    } catch (err) {
+      toast({ title: "Could not remove part number", description: (err as Error).message, variant: "destructive" });
+    }
+  };
 
   const trackPreview = (url: string) => {
     if (url) previewUrlsRef.current.add(url);
@@ -1007,14 +1080,10 @@ export default function ImageUploadForm() {
               <div className="relative">
                 <Input
                   id="partNumber"
+                  ref={partInputRef}
                   data-testid="input-part-number"
                   value={partNumberSearch}
-                  onChange={(e) => {
-                    const value = e.target.value;
-                    setPartNumberSearch(value);
-                    form.setValue("partNumber", value);
-                    setPartNumberOpen(true);
-                  }}
+                  onChange={(e) => handlePartNumberTyped(e.target.value)}
                   onFocus={() => workOrderNumber && setPartNumberOpen(true)}
                   onClick={() => workOrderNumber && setPartNumberOpen(true)}
                   onBlur={() => {
@@ -1023,9 +1092,11 @@ export default function ImageUploadForm() {
                   placeholder={
                     !workOrderNumber
                       ? "Select work order first"
-                      : partNumberOptions.length > 0
-                        ? `Type or select (${partNumberOptions.length} available)`
-                        : "No parts for this work order"
+                      : onlyServiceLines
+                        ? "Type the real part number"
+                        : partNumberOptions.length > 0
+                          ? `Type or select (${partNumberOptions.length} available)`
+                          : "Type the part number"
                   }
                   className="min-h-12 sm:min-h-14 text-base font-mono pr-10"
                   disabled={!workOrderNumber}
@@ -1047,7 +1118,7 @@ export default function ImageUploadForm() {
                   <div className="absolute z-50 w-full mt-1 bg-popover border rounded-md shadow-md max-h-60 overflow-auto">
                     {partNumberOptions.length === 0 ? (
                       <div className="px-3 py-2 text-sm text-muted-foreground">
-                        No part numbers found for this work order.
+                        No part numbers on file for this work order — type it in; it will be saved for everyone.
                       </div>
                     ) : (
                       <>
@@ -1081,19 +1152,46 @@ export default function ImageUploadForm() {
                                     : "opacity-0"
                                 )}
                               />
-                              <span className="truncate">
-                                {part.partNumber}
-                                {part.rev ? (
-                                  <span className="text-muted-foreground"> · Rev {part.rev}</span>
+                              <span className="min-w-0 flex-1">
+                                <span className="block truncate">
+                                  {part.partNumber}
+                                  {part.rev ? (
+                                    <span className="text-muted-foreground"> · Rev {part.rev}</span>
+                                  ) : null}
+                                </span>
+                                {part.nonPart ? (
+                                  <span className="block font-sans text-xs text-amber-700 dark:text-amber-300">
+                                    Not a real part — type the actual part #
+                                  </span>
+                                ) : part.source === "manual" ? (
+                                  <span className="block font-sans text-xs text-muted-foreground">
+                                    Added manually{part.addedBy ? ` by ${part.addedBy}` : ""}
+                                  </span>
                                 ) : null}
                               </span>
+                              {part.source === "manual" && part.canDelete ? (
+                                <button
+                                  type="button"
+                                  className="ml-2 rounded p-1 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                                  aria-label={`Remove ${part.partNumber}`}
+                                  title="Remove this saved part number"
+                                  data-testid={`button-remove-part-${part.id}`}
+                                  onMouseDown={(e) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    void removeManualPart(part);
+                                  }}
+                                >
+                                  <X className="h-4 w-4" />
+                                </button>
+                              ) : null}
                             </div>
                           ))}
                         {partNumberOptions.filter((part) =>
                           part.partNumber.toLowerCase().includes(partNumberSearch.toLowerCase())
                         ).length === 0 && (
                           <div className="px-3 py-2 text-sm text-muted-foreground">
-                            No part number matches “{partNumberSearch}”.
+                            “{partNumberSearch}” isn't on file — it will be used and saved as a new part number.
                           </div>
                         )}
                       </>
@@ -1101,6 +1199,21 @@ export default function ImageUploadForm() {
                   </div>
                 )}
               </div>
+              {workOrderNumber && onlyServiceLines && !partNumber?.trim() ? (
+                <p className="text-sm text-amber-700 dark:text-amber-300" data-testid="text-part-service-only">
+                  This work order only has a service charge line ({partNumberOptions[0].partNumber}) — type the real part number.
+                </p>
+              ) : null}
+              {listedPart?.nonPart ? (
+                <p className="text-sm text-amber-700 dark:text-amber-300" data-testid="text-part-not-real">
+                  {listedPart.partNumber} is a service charge, not a part. Type the actual part number instead.
+                </p>
+              ) : null}
+              {isManualPart && workOrderNumber ? (
+                <p className="text-sm text-blue-700 dark:text-blue-300" data-testid="text-part-manual">
+                  New part number — it will be saved for WO {workOrderNumber} for everyone when you upload.
+                </p>
+              ) : null}
               {form.formState.errors.partNumber && (
                 <p className="text-sm text-destructive">{form.formState.errors.partNumber.message}</p>
               )}
@@ -1108,15 +1221,19 @@ export default function ImageUploadForm() {
 
             <div className="space-y-2">
               <Label htmlFor="rev" className="text-base sm:text-lg font-medium">
-                Rev. <span className="text-destructive">*</span>
+                Rev.{" "}
+                {isManualPart ? (
+                  <span className="text-sm font-normal text-muted-foreground">(optional)</span>
+                ) : null}
               </Label>
               <Input
                 id="rev"
                 data-testid="input-rev"
                 {...form.register("rev")}
-                placeholder="Auto-filled from Excel"
-                className="min-h-12 sm:min-h-14 text-base bg-muted"
-                readOnly
+                placeholder={isManualPart ? "Type the rev (optional)" : "Auto-filled from Excel"}
+                className={cn("min-h-12 sm:min-h-14 text-base", !isManualPart && "bg-muted")}
+                readOnly={!isManualPart}
+                maxLength={20}
               />
               {form.formState.errors.rev && (
                 <p className="text-sm text-destructive">{form.formState.errors.rev.message}</p>

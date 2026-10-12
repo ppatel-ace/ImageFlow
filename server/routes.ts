@@ -5,7 +5,6 @@ import { checkForNewExcelFile, isExcelSyncAvailable } from "./excelSync";
 import { uploadFileToSharePoint } from "./sharepoint";
 import {
   getAllWorkOrders,
-  getPartNumbersByWorkOrder,
   reloadExcelData,
   getCurrentFileName,
 } from "./excelParser";
@@ -29,6 +28,7 @@ import {
   startScan,
 } from "./driveMigration";
 import { getDriveReaderStatus, parseDriveFolderId } from "./googleDriveReader";
+import { deleteManualPart, listPartOptions, recordManualPartSafely } from "./partOverrides";
 
 const JOB_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const MAX_STATUS_IDS = 100;
@@ -127,6 +127,15 @@ async function handleStageJob(req: AceAuthRequest & { imageflowStartedAt?: numbe
       return res.status(409).json({ error: "Job id already used" });
     }
     if (staged.created) {
+      await recordManualPartSafely({
+        workOrderNumber: String(workOrderNumber),
+        partNumber: String(partNumber ?? ""),
+        rev: String(rev ?? ""),
+        customerName: String(customerName),
+        userId,
+        userEmail: user.email || "",
+        userName: user.name || user.email || "Unknown User",
+      });
       console.log(
         `[upload] staged ${JSON.stringify({ id: staged.row.id, bytes: req.file.size, receivedMs: Date.now() - (req.imageflowStartedAt ?? Date.now()) })}`,
       );
@@ -202,6 +211,15 @@ async function handleImageUpload(req: AceAuthRequest, res: any) {
     );
 
     const user = req.aceSsoUser;
+    await recordManualPartSafely({
+      workOrderNumber: String(workOrderNumber),
+      partNumber: String(partNumber ?? ""),
+      rev: String(rev ?? ""),
+      customerName: String(customerName),
+      userId: user?.id || user?.sub || "unknown",
+      userEmail: user?.email || "",
+      userName: user?.name || user?.email || "Unknown User",
+    });
     try {
       await recordUploadHistory({
         workOrderNumber: String(workOrderNumber),
@@ -467,14 +485,34 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/part-numbers/:workOrder", requireImageflow, async (req, res) => {
+  app.get("/api/part-numbers/:workOrder", requireImageflow, async (req: AceAuthRequest, res) => {
     try {
       await ensureWorkOrderDataLoaded();
       const { workOrder } = req.params;
-      res.json(getPartNumbersByWorkOrder(workOrder));
+      res.json(await listPartOptions(workOrder, { userId: userIdOf(req), isAdmin: isImageflowAdmin(req) }));
     } catch (error: any) {
       console.error("Error fetching part numbers:", error);
       res.status(500).json({ error: "Failed to fetch part numbers" });
+    }
+  });
+
+  app.delete("/api/part-numbers/:workOrder/manual/:id", requireImageflow, async (req: AceAuthRequest, res) => {
+    if (!isDatabaseConfigured()) return res.status(503).json({ error: "DATABASE_URL not set" });
+    const id = String(req.params.id || "");
+    if (!/^\d{1,18}$/.test(id)) return res.status(400).json({ error: "Invalid id" });
+    try {
+      const result = await deleteManualPart(req.params.workOrder, id, {
+        userId: userIdOf(req),
+        isAdmin: isImageflowAdmin(req),
+      });
+      if (result === "not_found") return res.status(404).json({ error: "Not found" });
+      if (result === "forbidden") {
+        return res.status(403).json({ error: "Only the person who added this part number or an admin can remove it" });
+      }
+      res.json({ deleted: true });
+    } catch (error: any) {
+      console.error("[parts] delete failed:", error);
+      res.status(500).json({ error: error?.message || "Delete failed" });
     }
   });
 
