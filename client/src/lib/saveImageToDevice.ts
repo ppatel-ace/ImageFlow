@@ -2,7 +2,7 @@ import { Capacitor } from "@capacitor/core";
 import { Directory, Filesystem } from "@capacitor/filesystem";
 
 export type SaveImageResult =
-  | { ok: true; method: "native" | "download"; path?: string }
+  | { ok: true; method: "native" | "skipped"; path?: string }
   | { ok: false; error: string };
 
 function fileToBase64(file: File): Promise<string> {
@@ -32,18 +32,6 @@ function extensionFor(file: File): string {
 
 function buildFilename(file: File): string {
   return `ImageFlow-${Date.now()}.${extensionFor(file)}`;
-}
-
-function downloadViaAnchor(file: File, filename: string): void {
-  const url = URL.createObjectURL(file);
-  const a = Object.assign(document.createElement("a"), {
-    href: url,
-    download: filename,
-  });
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
 }
 
 async function ensureFilesystemPermission(): Promise<boolean> {
@@ -92,19 +80,16 @@ async function writeNative(file: File, filename: string): Promise<string> {
 /**
  * Persist a camera-captured image onto the device.
  * Native (Capacitor): Pictures/ImageFlow (or Documents/ImageFlow fallback).
- * Browser: triggers a download in the current user-gesture stack.
+ * Browser: nothing. A download makes Android Chrome open a preview (pulling the
+ * operator out of the app) and fills Downloads with a copy of every photo.
  */
 export async function saveImageToDevice(file: File): Promise<SaveImageResult> {
+  if (!Capacitor.isNativePlatform()) return { ok: true, method: "skipped" };
   const filename = buildFilename(file);
 
   try {
-    if (Capacitor.isNativePlatform()) {
-      const path = await writeNative(file, filename);
-      return { ok: true, method: "native", path };
-    }
-
-    downloadViaAnchor(file, filename);
-    return { ok: true, method: "download" };
+    const path = await writeNative(file, filename);
+    return { ok: true, method: "native", path };
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "Could not save image to device";
