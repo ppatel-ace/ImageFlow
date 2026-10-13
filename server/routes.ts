@@ -33,6 +33,24 @@ import { deleteManualPart, listPartOptions, recordManualPartSafely } from "./par
 const JOB_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const MAX_STATUS_IDS = 100;
 
+const CLIENT_EVENTS = new Set(["storage_problem", "blob_unreadable", "send_error", "camera_reload"]);
+const CLIENT_EVENT_MAX_BYTES = 4096;
+const CLIENT_EVENT_WINDOW_MS = 10 * 60 * 1000;
+const CLIENT_EVENT_LIMIT = 30;
+const clientEventCounts = new Map<string, { count: number; windowStart: number }>();
+
+function allowClientEvent(userId: string): boolean {
+  const now = Date.now();
+  const entry = clientEventCounts.get(userId);
+  if (!entry || now - entry.windowStart > CLIENT_EVENT_WINDOW_MS) {
+    if (clientEventCounts.size > 5000) clientEventCounts.clear();
+    clientEventCounts.set(userId, { count: 1, windowStart: now });
+    return true;
+  }
+  entry.count += 1;
+  return entry.count <= CLIENT_EVENT_LIMIT;
+}
+
 function userIdOf(req: AceAuthRequest): string | null {
   const user = req.aceSsoUser;
   return user?.id || user?.sub || null;
@@ -324,6 +342,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.error("[upload] retry failed:", error);
       res.status(500).json({ error: "Retry failed", message: error?.message || String(error) });
     }
+  });
+
+  // Device-side failures (storage aborts, unreadable photos, send errors, tab reloads)
+  // never reach the queue; log them so they show up in the container log. No storage.
+  app.post("/api/upload/client-events", requireImageflow, (req: AceAuthRequest, res) => {
+    const userId = userIdOf(req);
+    if (!userId) return res.status(401).json({ error: "Not authenticated" });
+    if (JSON.stringify(req.body ?? {}).length > CLIENT_EVENT_MAX_BYTES) {
+      return res.status(413).json({ error: "Event too large" });
+    }
+    if (!allowClientEvent(userId)) return res.status(429).json({ error: "Too many events" });
+    const clean = (v: unknown, max: number) =>
+      typeof v === "string" ? v.replace(/[\r\n\t]+/g, " ").slice(0, max) : "";
+    const event = clean(req.body?.event, 40);
+    if (!CLIENT_EVENTS.has(event)) return res.status(400).json({ error: "Unknown event" });
+    console.warn(
+      `[upload-client] user=${clean(req.aceSsoUser?.email || userId, 120)} device=${clean(req.body?.device, 40)} ` +
+        `online=${req.body?.online === false ? "no" : "yes"} event=${event} detail="${clean(req.body?.detail, 500)}" ` +
+        `ua="${clean(req.body?.userAgent, 200)}"`,
+    );
+    res.status(204).end();
   });
 
   app.get("/api/upload/stats", requireImageflow, async (req: AceAuthRequest, res) => {

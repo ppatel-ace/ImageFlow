@@ -7,7 +7,7 @@
  * drops the image bytes once the server replies 202 (durably staged in Postgres). Status
  * is then polled until the server worker confirms SharePoint upload.
  */
-import { isAndroid, isIOS } from "./deviceDetection";
+import { deviceLabel, reportClientEvent } from "./clientEvents";
 
 export type QueueStatus =
   | "draft"
@@ -150,15 +150,67 @@ function isQuotaError(err: unknown): boolean {
   return errorName(err) === "QuotaExceededError" || /quota/i.test(String((err as any)?.message ?? ""));
 }
 
-/** Errors that mean the connection is stale, not that storage is full. */
+/**
+ * Errors worth one retry on a fresh connection: a stale connection, or a transaction
+ * Chrome aborted without saying why (seen on Android under memory pressure).
+ */
 function isConnectionError(err: unknown): boolean {
   const name = errorName(err);
   return (
     name === "InvalidStateError" ||
     name === "TransactionInactiveError" ||
     name === "UnknownError" ||
+    name === "AbortError" ||
     /clos(ed|ing)/i.test(String((err as any)?.message ?? ""))
   );
+}
+
+/**
+ * Photo bytes as stored when Chrome refuses a Blob write. Rows normally hold Blobs
+ * (lazy, file-backed, cheap to list); only rows whose Blob write aborted hold bytes.
+ */
+type StoredBytes = { bytes: ArrayBuffer; type: string };
+type StoredPhoto = Omit<QueuedPhoto, "blob" | "thumb"> & {
+  blob: Blob | StoredBytes | null;
+  thumb: Blob | StoredBytes | null;
+};
+
+function isStoredBytes(v: unknown): v is StoredBytes {
+  return Boolean(v) && typeof v === "object" && (v as StoredBytes).bytes instanceof ArrayBuffer;
+}
+
+function bytesToBlob(v: Blob | StoredBytes | null): Blob | null {
+  if (!v) return null;
+  return isStoredBytes(v) ? new Blob([v.bytes], { type: v.type }) : v;
+}
+
+function fromStored(row: StoredPhoto): QueuedPhoto {
+  return { ...row, blob: bytesToBlob(row.blob), thumb: bytesToBlob(row.thumb) };
+}
+
+async function blobToBytes(b: Blob | null): Promise<StoredBytes | null> {
+  if (!b) return null;
+  return { bytes: await b.arrayBuffer(), type: b.type || "image/jpeg" };
+}
+
+async function toStoredBytes(p: QueuedPhoto): Promise<StoredPhoto> {
+  const blob = await blobToBytes(p.blob);
+  const thumb = p.thumb === p.blob ? blob : await blobToBytes(p.thumb);
+  return { ...p, blob, thumb };
+}
+
+/** Memory-only copy that stays readable even if the original file-backed Blob goes away. */
+async function toMemoryCopy(p: QueuedPhoto): Promise<QueuedPhoto> {
+  try {
+    return fromStored(await toStoredBytes(p));
+  } catch {
+    return p;
+  }
+}
+
+function storedSize(v: Blob | StoredBytes | null): number {
+  if (!v) return 0;
+  return isStoredBytes(v) ? v.bytes.byteLength : v.size;
 }
 
 function runTx<T>(
@@ -198,10 +250,12 @@ async function tx<T>(
 
 /** Make room without touching unsent photos: drop finished rows and duplicate thumbnails. */
 async function freeDeviceSpace(): Promise<void> {
-  const rows = (await tx<QueuedPhoto[]>("readonly", (s) => s.getAll())) ?? [];
+  const rows = (await tx<StoredPhoto[]>("readonly", (s) => s.getAll())) ?? [];
   const done = rows.filter((p) => p.status === "done").map((p) => p.id);
   // A thumb the same size as the blob is the original stored twice (compression fallback).
-  const slim = rows.filter((p) => p.status !== "done" && p.thumb && p.blob && p.thumb.size === p.blob.size);
+  const slim = rows.filter(
+    (p) => p.status !== "done" && p.thumb && p.blob && storedSize(p.thumb) === storedSize(p.blob),
+  );
   await tx("readwrite", (s) => {
     for (const id of done) s.delete(id);
     for (const p of slim) s.put({ ...p, thumb: null });
@@ -215,6 +269,22 @@ async function writeWithRecovery(fn: (store: IDBObjectStore) => void): Promise<v
     if (!isQuotaError(err)) throw err;
     await freeDeviceSpace().catch(() => {});
     await tx("readwrite", fn);
+  }
+}
+
+/** Put full photo rows; if Chrome keeps aborting the Blob write, store the bytes instead. */
+async function writePhotos(photos: QueuedPhoto[]): Promise<void> {
+  try {
+    await writeWithRecovery((s) => {
+      for (const p of photos) s.put(p);
+    });
+  } catch (err) {
+    if (errorName(err) !== "AbortError" && errorName(err) !== "UnknownError") throw err;
+    const stored = await Promise.all(photos.map(toStoredBytes));
+    await writeWithRecovery((s) => {
+      for (const p of stored) s.put(p);
+    });
+    reportClientEvent("storage_problem", `blob write aborted (${errorName(err)}); stored as bytes`);
   }
 }
 
@@ -239,6 +309,10 @@ async function noteStorageProblem(err: unknown): Promise<void> {
     at: Date.now(),
   };
   console.error("[uploadQueue] device storage problem:", storageProblem, err);
+  reportClientEvent(
+    "storage_problem",
+    `${kind}: ${storageProblem.detail}${usageMb !== null ? ` usage=${usageMb}MB/${quotaMb}MB` : ""}`,
+  );
   if (firstTime) emitChange();
 }
 
@@ -257,7 +331,7 @@ export function describeStorageProblem(p: StorageProblem | null = storageProblem
 export async function listPhotos(): Promise<QueuedPhoto[]> {
   let rows: QueuedPhoto[] = [];
   try {
-    rows = (await tx<QueuedPhoto[]>("readonly", (s) => s.getAll())) ?? [];
+    rows = ((await tx<StoredPhoto[]>("readonly", (s) => s.getAll())) ?? []).map(fromStored);
   } catch (err) {
     await noteStorageProblem(err);
   }
@@ -270,7 +344,8 @@ async function getPhoto(id: string): Promise<QueuedPhoto | undefined> {
   const held = memoryPhotos.get(id);
   if (held) return held;
   try {
-    return await tx<QueuedPhoto>("readonly", (s) => s.get(id));
+    const row = await tx<StoredPhoto>("readonly", (s) => s.get(id));
+    return row ? fromStored(row) : undefined;
   } catch (err) {
     await noteStorageProblem(err);
     return undefined;
@@ -284,13 +359,11 @@ async function putPhoto(photo: QueuedPhoto): Promise<boolean> {
     return false;
   }
   try {
-    await writeWithRecovery((s) => {
-      s.put(photo);
-    });
+    await writePhotos([photo]);
     return true;
   } catch (err) {
     await noteStorageProblem(err);
-    memoryPhotos.set(photo.id, photo);
+    memoryPhotos.set(photo.id, await toMemoryCopy(photo));
     return false;
   }
 }
@@ -304,9 +377,7 @@ async function flushMemoryToDevice(): Promise<void> {
       continue;
     }
     try {
-      await writeWithRecovery((s) => {
-        s.put(photo);
-      });
+      await writePhotos([photo]);
       memoryPhotos.delete(id);
     } catch {
       return;
@@ -406,12 +477,10 @@ export async function enqueuePhotos(photos: QueuedPhoto[]): Promise<boolean> {
   let persisted = onDevice.length === queued.length;
   if (onDevice.length > 0) {
     try {
-      await writeWithRecovery((s) => {
-        for (const p of onDevice) s.put(p);
-      });
+      await writePhotos(onDevice);
     } catch (err) {
       await noteStorageProblem(err);
-      for (const p of onDevice) memoryPhotos.set(p.id, p);
+      for (const p of onDevice) memoryPhotos.set(p.id, await toMemoryCopy(p));
       persisted = false;
     }
   }
@@ -504,14 +573,6 @@ async function syncWakeLock(photos: QueuedPhoto[]): Promise<void> {
   }
 }
 
-function deviceLabel(): string {
-  const cap = (window as any).Capacitor;
-  if (cap?.isNativePlatform?.()) return "android-app";
-  if (isAndroid()) return "android-browser";
-  if (isIOS()) return "ios-browser";
-  return "desktop-browser";
-}
-
 function backoffMs(attempts: number): number {
   const base = BACKOFF_S[Math.min(attempts - 1, BACKOFF_S.length - 1)] * 1000;
   return base + Math.round(base * 0.3 * Math.random());
@@ -573,11 +634,39 @@ async function sendLegacy(photo: QueuedPhoto): Promise<void> {
   await scheduleRetry(photo, body?.message || body?.error || `HTTP ${res.status}`);
 }
 
-async function sendOne(photo: QueuedPhoto): Promise<void> {
-  if (!photo.blob || !photo.meta) {
-    await updatePhoto(photo.id, { status: "failed", lastError: "Photo data missing on device" });
+/** fetch() fails like a network error when the body can't be read, so read it first. */
+async function readableCopy(blob: Blob): Promise<Blob | null> {
+  try {
+    return new Blob([await blob.arrayBuffer()], { type: blob.type || "image/jpeg" });
+  } catch (err) {
+    reportClientEvent("blob_unreadable", `${errorName(err)}: ${String((err as any)?.message ?? "")}`);
+    return null;
+  }
+}
+
+function describeSendError(err: unknown): string {
+  if (typeof navigator !== "undefined" && navigator.onLine === false) {
+    return "Offline — will send when back online";
+  }
+  if (errorName(err) === "AbortError") return "Upload timed out — will retry";
+  const message = String((err as any)?.message ?? "").slice(0, 120);
+  return `Could not reach ImageFlow — will retry (${errorName(err)}${message ? `: ${message}` : ""})`;
+}
+
+async function sendOne(queued: QueuedPhoto): Promise<void> {
+  if (!queued.blob || !queued.meta) {
+    await updatePhoto(queued.id, { status: "failed", lastError: "Photo data missing on device" });
     return;
   }
+  const readable = await readableCopy(queued.blob);
+  if (!readable) {
+    await updatePhoto(queued.id, {
+      status: "failed",
+      lastError: "Photo data was lost on this device — please retake.",
+    });
+    return;
+  }
+  const photo: QueuedPhoto = { ...queued, blob: readable };
   inflight.add(photo.id);
   await updatePhoto(photo.id, { status: "sending" });
   const attempt = photo.attempts + 1;
@@ -591,7 +680,7 @@ async function sendOne(photo: QueuedPhoto): Promise<void> {
           compressMs: photo.compressMs,
           waitMs: photo.queuedAt ? Date.now() - photo.queuedAt : 0,
           attempt,
-          bytes: photo.blob.size,
+          bytes: readable.size,
         }),
       },
     });
@@ -635,13 +724,10 @@ async function sendOne(photo: QueuedPhoto): Promise<void> {
       return;
     }
     await scheduleRetry(photo, body?.message || body?.error || `Server error (HTTP ${res.status})`);
-  } catch (err: any) {
-    await scheduleRetry(
-      photo,
-      err?.name === "AbortError"
-        ? "Upload timed out — will retry"
-        : "Network unavailable — will retry",
-    );
+  } catch (err) {
+    const message = describeSendError(err);
+    if (navigator.onLine !== false) reportClientEvent("send_error", message);
+    await scheduleRetry(photo, message);
   } finally {
     inflight.delete(photo.id);
   }

@@ -3352,6 +3352,22 @@ async function deleteManualPart(workOrder, id, viewer) {
 // server/routes.ts
 var JOB_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 var MAX_STATUS_IDS = 100;
+var CLIENT_EVENTS = /* @__PURE__ */ new Set(["storage_problem", "blob_unreadable", "send_error", "camera_reload"]);
+var CLIENT_EVENT_MAX_BYTES = 4096;
+var CLIENT_EVENT_WINDOW_MS = 10 * 60 * 1e3;
+var CLIENT_EVENT_LIMIT = 30;
+var clientEventCounts = /* @__PURE__ */ new Map();
+function allowClientEvent(userId) {
+  const now = Date.now();
+  const entry = clientEventCounts.get(userId);
+  if (!entry || now - entry.windowStart > CLIENT_EVENT_WINDOW_MS) {
+    if (clientEventCounts.size > 5e3) clientEventCounts.clear();
+    clientEventCounts.set(userId, { count: 1, windowStart: now });
+    return true;
+  }
+  entry.count += 1;
+  return entry.count <= CLIENT_EVENT_LIMIT;
+}
 function userIdOf(req) {
   const user = req.aceSsoUser;
   return user?.id || user?.sub || null;
@@ -3598,6 +3614,21 @@ async function registerRoutes(app2) {
       console.error("[upload] retry failed:", error);
       res.status(500).json({ error: "Retry failed", message: error?.message || String(error) });
     }
+  });
+  app2.post("/api/upload/client-events", requireImageflow, (req, res) => {
+    const userId = userIdOf(req);
+    if (!userId) return res.status(401).json({ error: "Not authenticated" });
+    if (JSON.stringify(req.body ?? {}).length > CLIENT_EVENT_MAX_BYTES) {
+      return res.status(413).json({ error: "Event too large" });
+    }
+    if (!allowClientEvent(userId)) return res.status(429).json({ error: "Too many events" });
+    const clean = (v, max) => typeof v === "string" ? v.replace(/[\r\n\t]+/g, " ").slice(0, max) : "";
+    const event = clean(req.body?.event, 40);
+    if (!CLIENT_EVENTS.has(event)) return res.status(400).json({ error: "Unknown event" });
+    console.warn(
+      `[upload-client] user=${clean(req.aceSsoUser?.email || userId, 120)} device=${clean(req.body?.device, 40)} online=${req.body?.online === false ? "no" : "yes"} event=${event} detail="${clean(req.body?.detail, 500)}" ua="${clean(req.body?.userAgent, 200)}"`
+    );
+    res.status(204).end();
   });
   app2.get("/api/upload/stats", requireImageflow, async (req, res) => {
     if (!isImageflowAdmin(req)) return res.status(403).json({ error: "Admin only" });

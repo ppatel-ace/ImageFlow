@@ -19,6 +19,7 @@ import CustomCamera from "@/components/CustomCamera";
 import { shouldUseCustomCamera } from "@/lib/deviceDetection";
 import { saveImageToDevice } from "@/lib/saveImageToDevice";
 import { prepareImageForUpload } from "@/lib/compressImage";
+import { reportClientEvent } from "@/lib/clientEvents";
 import { trackFeature } from "@/components/AceUsageBeacon";
 import UploadQueuePanel from "@/components/UploadQueuePanel";
 import { useUploadQueue } from "@/hooks/use-upload-queue";
@@ -100,6 +101,41 @@ type PartOption = {
 };
 
 const partKey = (value: string) => value.trim().toUpperCase().replace(/\s+/g, "");
+
+/** Survives a tab reload (Android Chrome kills the page when memory runs low). */
+const SAVED_FORM_KEY = "imageflow.form";
+const SAVED_FORM_TTL_MS = 12 * 60 * 60 * 1000;
+const CAMERA_OPEN_KEY = "imageflow.cameraOpen";
+
+function readSavedForm(): Partial<UploadFormData> {
+  try {
+    const raw = localStorage.getItem(SAVED_FORM_KEY);
+    if (!raw) return {};
+    const saved = JSON.parse(raw) as Partial<UploadFormData> & { savedAt?: number };
+    if (!saved.savedAt || Date.now() - saved.savedAt > SAVED_FORM_TTL_MS) {
+      localStorage.removeItem(SAVED_FORM_KEY);
+      return {};
+    }
+    const pick = (v: unknown) => (typeof v === "string" ? v : "");
+    return {
+      dept: pick(saved.dept),
+      workOrderNumber: pick(saved.workOrderNumber),
+      partNumber: pick(saved.partNumber),
+      rev: pick(saved.rev),
+      customerName: pick(saved.customerName),
+    };
+  } catch {
+    return {};
+  }
+}
+
+function writeSavedForm(values: UploadFormData): void {
+  try {
+    localStorage.setItem(SAVED_FORM_KEY, JSON.stringify({ ...values, savedAt: Date.now() }));
+  } catch {
+    /* storage full or blocked — persistence is best-effort */
+  }
+}
 
 function fileExtension(file: Blob): string {
   const name = file instanceof File ? file.name : "";
@@ -229,23 +265,64 @@ export default function ImageUploadForm() {
     refetchOnWindowFocus: true,
   });
 
-  const lastDept = localStorage.getItem("lastDept") || "";
-  const lastWorkOrderNumber = localStorage.getItem("lastWorkOrderNumber") || "";
+  const [savedForm] = useState(readSavedForm);
 
   const form = useForm<UploadFormData>({
     resolver: zodResolver(uploadFormSchema),
     defaultValues: {
-      dept: lastDept,
-      partNumber: "",
-      rev: "",
-      customerName: "",
-      workOrderNumber: lastWorkOrderNumber,
+      dept: savedForm.dept || localStorage.getItem("lastDept") || "",
+      partNumber: savedForm.partNumber ?? "",
+      rev: savedForm.rev ?? "",
+      customerName: savedForm.customerName ?? "",
+      workOrderNumber: savedForm.workOrderNumber ?? "",
     },
   });
 
   // Watch all form fields efficiently
   const { dept, rev, workOrderNumber, partNumber, customerName } = form.watch();
   const [prevWorkOrder, setPrevWorkOrder] = useState(workOrderNumber);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      writeSavedForm({
+        dept: dept ?? "",
+        workOrderNumber: workOrderNumber ?? "",
+        partNumber: partNumber ?? "",
+        rev: rev ?? "",
+        customerName: customerName ?? "",
+      });
+    }, 300);
+    return () => window.clearTimeout(timer);
+  }, [dept, workOrderNumber, partNumber, rev, customerName]);
+
+  // If the camera flag survived, the tab was killed and reloaded while the camera was open.
+  useEffect(() => {
+    let reloaded = false;
+    try {
+      reloaded = sessionStorage.getItem(CAMERA_OPEN_KEY) === "1";
+      sessionStorage.removeItem(CAMERA_OPEN_KEY);
+    } catch {
+      /* sessionStorage blocked */
+    }
+    if (!reloaded) return;
+    reportClientEvent("camera_reload", `wo=${savedForm.workOrderNumber ? "restored" : "none"}`);
+    toast({
+      title: "The page reloaded while the camera was open",
+      description: savedForm.workOrderNumber
+        ? "The tablet ran low on memory. Your work order and part were restored — check them, then take the photo again."
+        : "The tablet ran low on memory. Take the photo again.",
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    try {
+      if (showCustomCamera) sessionStorage.setItem(CAMERA_OPEN_KEY, "1");
+      else sessionStorage.removeItem(CAMERA_OPEN_KEY);
+    } catch {
+      /* sessionStorage blocked */
+    }
+  }, [showCustomCamera]);
 
   // Auto-populate part number fields from selection
   const handlePartNumberSelect = (index: number) => {
@@ -1428,10 +1505,16 @@ export default function ImageUploadForm() {
             onClick={() => {
               form.reset({
                 dept: "",
+                workOrderNumber: "",
                 partNumber: "",
                 rev: "",
                 customerName: "",
               });
+              try {
+                localStorage.removeItem(SAVED_FORM_KEY);
+              } catch {
+                /* storage blocked */
+              }
               clearAllImages();
             }}
             disabled={isSavingLocal || isUploadingSharePoint}

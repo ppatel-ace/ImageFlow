@@ -4,6 +4,8 @@ import { Camera, X } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
 
+const MAX_CAPTURE_EDGE = 3000;
+
 interface CustomCameraProps {
   onCapture: (file: File) => void;
   onClose: () => void;
@@ -33,6 +35,12 @@ export default function CustomCamera({ onCapture, onClose }: CustomCameraProps) 
       stopCamera();
     };
   }, []);
+
+  // Release the preview's decoded image when it is replaced, used, or the camera closes.
+  useEffect(() => {
+    if (!capturedImage) return;
+    return () => URL.revokeObjectURL(capturedImage);
+  }, [capturedImage]);
 
   const startCamera = async () => {
     try {
@@ -165,6 +173,8 @@ export default function CustomCamera({ onCapture, onClose }: CustomCameraProps) 
         URL.revokeObjectURL(imageUrl);
         return;
       }
+      // The live stream isn't shown on the preview screen; Retake restarts it.
+      stopCamera();
       setCapturedImage(imageUrl);
       setCapturedFile(file);
     };
@@ -348,6 +358,24 @@ export default function CustomCamera({ onCapture, onClose }: CustomCameraProps) 
             photoSettings.fillLightMode = 'auto';
           }
           
+          // Full-sensor stills (12-50 MP) run low-memory tablets out of memory and Chrome
+          // reloads the tab; uploads are downscaled anyway, so ask for at most MAX_CAPTURE_EDGE.
+          const widthRange = capabilities.imageWidth;
+          const heightRange = capabilities.imageHeight;
+          if (widthRange?.max && heightRange?.max) {
+            const longEdge = Math.max(widthRange.max, heightRange.max);
+            if (longEdge > MAX_CAPTURE_EDGE) {
+              const scale = MAX_CAPTURE_EDGE / longEdge;
+              const clamp = (v: number, r: { min?: number; max: number; step?: number }) => {
+                const step = r.step || 1;
+                const min = r.min ?? 1;
+                return Math.min(r.max, Math.max(min, Math.round((v - min) / step) * step + min));
+              };
+              photoSettings.imageWidth = clamp(widthRange.max * scale, widthRange);
+              photoSettings.imageHeight = clamp(heightRange.max * scale, heightRange);
+            }
+          }
+
           // Add slight exposure compensation to keep paper white without losing ink detail
           if (capabilities.exposureCompensation) {
             const expRange = capabilities.exposureCompensation;
@@ -374,8 +402,12 @@ export default function CustomCamera({ onCapture, onClose }: CustomCameraProps) 
           return;
         }
         
-        // Always apply post-processing for professional document capture
-        // Adds slight contrast/saturation/brightness boost for sharp text
+        // At neutral brightness/contrast, skip the second full-size decode + canvas.
+        if (brightness === 100 && contrast === 100) {
+          const file = new File([blob], `photo-${Date.now()}.jpg`, { type: blob.type || "image/jpeg" });
+          setCaptureResult(URL.createObjectURL(blob), file);
+          return;
+        }
         try {
           const { file, previewUrl } = await applyPostProcessing(blob);
           setCaptureResult(previewUrl, file);
@@ -415,7 +447,7 @@ export default function CustomCamera({ onCapture, onClose }: CustomCameraProps) 
     }
     setCapturedImage(null);
     setCapturedFile(null);
-    // Restart camera for retake
+    stopCamera();
     startCamera();
   };
 
