@@ -194,13 +194,41 @@ async function blobToBytes(b: Blob | null): Promise<StoredBytes | null> {
 }
 
 async function toStoredBytes(p: QueuedPhoto): Promise<StoredPhoto> {
-  const blob = await blobToBytes(p.blob);
-  const thumb = p.thumb === p.blob ? blob : await blobToBytes(p.thumb);
+  const cached = p.blob ? photoBytes.get(p.id) : undefined;
+  const blob = cached ? { bytes: cached, type: p.blob?.type || "image/jpeg" } : await blobToBytes(p.blob);
+  const thumb = p.thumb === p.blob ? blob : await blobToBytes(p.thumb).catch(() => null);
   return { ...p, blob, thumb };
 }
 
-/** Memory-only copy that stays readable even if the original file-backed Blob goes away. */
+/**
+ * Compressed upload bytes kept on the JS heap for photos taken in this page.
+ * Some tablets' Chrome can't read Blobs back (IndexedDB and in-memory alike), so sends
+ * and the bytes fallback use these instead of the Blob whenever they exist.
+ */
+const photoBytes = new Map<string, ArrayBuffer>();
+
+export function rememberPhotoBytes(id: string, bytes: ArrayBuffer): void {
+  photoBytes.set(id, bytes);
+}
+
+/** Upload bytes for a photo: page-memory copy first, else read the stored Blob. */
+async function readPhotoBytes(p: QueuedPhoto): Promise<ArrayBuffer | null> {
+  const cached = photoBytes.get(p.id);
+  if (cached) return cached;
+  if (!p.blob) return null;
+  try {
+    const bytes = await p.blob.arrayBuffer();
+    photoBytes.set(p.id, bytes);
+    return bytes;
+  } catch (err) {
+    reportClientEvent("blob_unreadable", `${errorName(err)}: ${String((err as any)?.message ?? "")}`);
+    return null;
+  }
+}
+
+/** Memory-only copy; sends read the page-memory bytes, so the Blob only feeds thumbnails. */
 async function toMemoryCopy(p: QueuedPhoto): Promise<QueuedPhoto> {
+  if (photoBytes.has(p.id)) return p;
   try {
     return fromStored(await toStoredBytes(p));
   } catch {
@@ -397,6 +425,7 @@ export async function updatePhoto(
   const current = await getPhoto(id);
   if (!current) return undefined;
   const next = { ...current, ...patch, updatedAt: Date.now() };
+  if (patch.blob === null) photoBytes.delete(id);
   await putPhoto(next);
   if (notify) emitChange();
   return next;
@@ -415,7 +444,10 @@ export async function removePhoto(id: string): Promise<void> {
 
 export async function removePhotos(ids: string[]): Promise<void> {
   if (ids.length === 0) return;
-  for (const id of ids) memoryPhotos.delete(id);
+  for (const id of ids) {
+    memoryPhotos.delete(id);
+    photoBytes.delete(id);
+  }
   try {
     await tx("readwrite", (s) => {
       for (const id of ids) s.delete(id);
@@ -578,22 +610,42 @@ function backoffMs(attempts: number): number {
   return base + Math.round(base * 0.3 * Math.random());
 }
 
-function buildForm(photo: QueuedPhoto, includeJobId: boolean): FormData {
+type MultipartBody = { body: Uint8Array; contentType: string };
+
+/**
+ * multipart/form-data built from bytes: FormData + Blob would go back through the
+ * browser's Blob storage, which is exactly what fails on the affected tablets.
+ */
+export function buildMultipart(photo: QueuedPhoto, bytes: ArrayBuffer, includeJobId: boolean): MultipartBody {
   const meta = photo.meta!;
-  const form = new FormData();
-  if (includeJobId) form.append("jobId", photo.id);
-  form.append("customerName", meta.customerName);
-  form.append("dept", meta.dept);
-  form.append("workOrderNumber", meta.workOrderNumber);
-  form.append("imageName", meta.imageName);
-  form.append("partNumber", meta.partNumber);
-  form.append("rev", meta.rev);
-  const blob = photo.blob!;
-  form.append(
-    "imageFile",
-    new File([blob], `${meta.imageName}.${photo.ext}`, { type: blob.type || "image/jpeg" }),
+  const boundary = `----ImageFlow${newPhotoId().replace(/-/g, "")}`;
+  const enc = new TextEncoder();
+  const chunks: Uint8Array[] = [];
+  const field = (name: string, value: string) =>
+    chunks.push(enc.encode(`--${boundary}\r\nContent-Disposition: form-data; name="${name}"\r\n\r\n${value}\r\n`));
+  if (includeJobId) field("jobId", photo.id);
+  field("customerName", meta.customerName);
+  field("dept", meta.dept);
+  field("workOrderNumber", meta.workOrderNumber);
+  field("imageName", meta.imageName);
+  field("partNumber", meta.partNumber);
+  field("rev", meta.rev);
+  const fileName = `${meta.imageName}.${photo.ext}`.replace(/[^\x20-\x7e]|["\\]/g, "_");
+  const type = photo.blob?.type || "image/jpeg";
+  chunks.push(
+    enc.encode(
+      `--${boundary}\r\nContent-Disposition: form-data; name="imageFile"; filename="${fileName}"\r\nContent-Type: ${type}\r\n\r\n`,
+    ),
   );
-  return form;
+  chunks.push(new Uint8Array(bytes));
+  chunks.push(enc.encode(`\r\n--${boundary}--\r\n`));
+  const body = new Uint8Array(chunks.reduce((n, c) => n + c.byteLength, 0));
+  let offset = 0;
+  for (const c of chunks) {
+    body.set(c, offset);
+    offset += c.byteLength;
+  }
+  return { body, contentType: `multipart/form-data; boundary=${boundary}` };
 }
 
 async function fetchWithTimeout(url: string, init: RequestInit): Promise<Response> {
@@ -616,10 +668,12 @@ async function scheduleRetry(photo: QueuedPhoto, message: string): Promise<void>
   });
 }
 
-async function sendLegacy(photo: QueuedPhoto): Promise<void> {
+async function sendLegacy(photo: QueuedPhoto, bytes: ArrayBuffer): Promise<void> {
+  const multipart = buildMultipart(photo, bytes, false);
   const res = await fetchWithTimeout("/api/upload/sharepoint", {
     method: "POST",
-    body: buildForm(photo, false),
+    body: multipart.body,
+    headers: { "Content-Type": multipart.contentType },
   });
   const body = await res.json().catch(() => ({}) as any);
   if (res.ok) {
@@ -634,16 +688,6 @@ async function sendLegacy(photo: QueuedPhoto): Promise<void> {
   await scheduleRetry(photo, body?.message || body?.error || `HTTP ${res.status}`);
 }
 
-/** fetch() fails like a network error when the body can't be read, so read it first. */
-async function readableCopy(blob: Blob): Promise<Blob | null> {
-  try {
-    return new Blob([await blob.arrayBuffer()], { type: blob.type || "image/jpeg" });
-  } catch (err) {
-    reportClientEvent("blob_unreadable", `${errorName(err)}: ${String((err as any)?.message ?? "")}`);
-    return null;
-  }
-}
-
 function describeSendError(err: unknown): string {
   if (typeof navigator !== "undefined" && navigator.onLine === false) {
     return "Offline — will send when back online";
@@ -653,34 +697,36 @@ function describeSendError(err: unknown): string {
   return `Could not reach ImageFlow — will retry (${errorName(err)}${message ? `: ${message}` : ""})`;
 }
 
-async function sendOne(queued: QueuedPhoto): Promise<void> {
-  if (!queued.blob || !queued.meta) {
-    await updatePhoto(queued.id, { status: "failed", lastError: "Photo data missing on device" });
+async function sendOne(photo: QueuedPhoto): Promise<void> {
+  if (!photo.blob || !photo.meta) {
+    await updatePhoto(photo.id, { status: "failed", lastError: "Photo data missing on device" });
     return;
   }
-  const readable = await readableCopy(queued.blob);
-  if (!readable) {
-    await updatePhoto(queued.id, {
+  // fetch() fails like a network error when the body can't be read, so get the bytes first.
+  const bytes = await readPhotoBytes(photo);
+  if (!bytes) {
+    await updatePhoto(photo.id, {
       status: "failed",
       lastError: "Photo data was lost on this device — please retake.",
     });
     return;
   }
-  const photo: QueuedPhoto = { ...queued, blob: readable };
   inflight.add(photo.id);
   await updatePhoto(photo.id, { status: "sending" });
   const attempt = photo.attempts + 1;
   try {
+    const multipart = buildMultipart(photo, bytes, true);
     const res = await fetchWithTimeout("/api/upload/jobs", {
       method: "POST",
-      body: buildForm(photo, true),
+      body: multipart.body,
       headers: {
+        "Content-Type": multipart.contentType,
         "x-imageflow-device": deviceLabel(),
         "x-imageflow-client-ms": JSON.stringify({
           compressMs: photo.compressMs,
           waitMs: photo.queuedAt ? Date.now() - photo.queuedAt : 0,
           attempt,
-          bytes: readable.size,
+          bytes: bytes.byteLength,
         }),
       },
     });
@@ -712,7 +758,7 @@ async function sendOne(queued: QueuedPhoto): Promise<void> {
       return;
     }
     if (res.status === 503 && body?.fallback === "sync") {
-      await sendLegacy(photo);
+      await sendLegacy(photo, bytes);
       return;
     }
     if (res.status === 400 || res.status === 409 || res.status === 413) {

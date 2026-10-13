@@ -29,6 +29,7 @@ import {
   newPhotoId,
   removePhoto,
   removePhotos,
+  rememberPhotoBytes,
   saveDraft,
   describeStorageProblem,
   updatePhoto,
@@ -503,6 +504,26 @@ export default function ImageUploadForm() {
         compressMs: Math.round(prepared.compressMs),
         preparing: false,
       };
+      // Keep the upload bytes in page memory now: on some tablets Chrome can't read
+      // Blobs back later, and the photo is only recoverable while the operator is here.
+      let bytes: ArrayBuffer | null = null;
+      try {
+        bytes = await prepared.blob.arrayBuffer();
+      } catch (err) {
+        reportClientEvent("blob_unreadable", `at capture: ${(err as Error)?.name}: ${(err as Error)?.message ?? ""}`);
+      }
+      if (!bytes) {
+        releasePreview(current.preview);
+        setCapturedImages((prev) => prev.filter((img) => img.id !== id));
+        toast({
+          title: "This photo could not be saved — take it again",
+          description:
+            "The browser on this tablet could not read the photo back. If this keeps happening, close Chrome completely and reopen ImageFlow.",
+          variant: "destructive",
+        });
+        return;
+      }
+      rememberPhotoBytes(id, bytes);
       const persisted = await saveDraft(capturedToRecord(ready, "draft"));
       if (!persisted && !storageWarnedRef.current) {
         storageWarnedRef.current = true;
