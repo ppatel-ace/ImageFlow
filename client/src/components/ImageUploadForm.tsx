@@ -19,6 +19,10 @@ import CustomCamera from "@/components/CustomCamera";
 import VideoRecorder, { canRecordInApp } from "@/components/VideoRecorder";
 import CustomWorkOrderDialog, { type CustomWorkOrder } from "@/components/CustomWorkOrderDialog";
 import { MAX_VIDEO_BYTES, isVideoBlob, isVideoExt, videoExtension } from "@/lib/media";
+import { formatStampDate, normalizeStamp, stampKey, type PhotoStamp } from "@/lib/photoStamp";
+import { Switch } from "@/components/ui/switch";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Textarea } from "@/components/ui/textarea";
 import { shouldUseCustomCamera } from "@/lib/deviceDetection";
 import { saveImageToDevice } from "@/lib/saveImageToDevice";
 import { prepareImageForUpload } from "@/lib/compressImage";
@@ -77,6 +81,10 @@ interface CapturedImage {
   sizeBytes: number;
   compressMs: number;
   preparing: boolean;
+  /** When the photo was taken (gallery: the file's date); used for the stamp's date line. */
+  takenAt: number;
+  /** stampKey() of the text burned into `blob`; null when restored (can't be re-stamped). */
+  stampKey: string | null;
 }
 
 let lastCaptureMs = 0;
@@ -118,6 +126,25 @@ const partKey = (value: string) => value.trim().toUpperCase().replace(/\s+/g, ""
 
 /** Survives a tab reload (Android Chrome kills the page when memory runs low). */
 const SAVED_FORM_KEY = "imageflow.form";
+const STAMP_SETTINGS_KEY = "imageflow.stamp";
+
+type StampSettings = { enabled: boolean; includeDate: boolean };
+
+function readStampSettings(): StampSettings {
+  try {
+    const saved = JSON.parse(localStorage.getItem(STAMP_SETTINGS_KEY) || "{}");
+    return { enabled: saved.enabled !== false, includeDate: saved.includeDate !== false };
+  } catch {
+    return { enabled: true, includeDate: true };
+  }
+}
+
+/** Sage WOs: "WO 0151589 · P/N 23999-501 Rev B". */
+function autoStampLine(wo: string, part: string, rev: string): string {
+  const parts = [wo.trim() ? `WO ${wo.trim()}` : ""];
+  if (part.trim()) parts.push(`P/N ${part.trim()}${rev.trim() ? ` Rev ${rev.trim()}` : ""}`);
+  return parts.filter(Boolean).join(" · ");
+}
 const SAVED_FORM_TTL_MS = 12 * 60 * 60 * 1000;
 const CAMERA_OPEN_KEY = "imageflow.cameraOpen";
 
@@ -207,6 +234,8 @@ function draftToCaptured(p: QueuedPhoto): CapturedImage {
     sizeBytes: p.sizeBytes,
     compressMs: p.compressMs,
     preparing: false,
+    takenAt: p.createdAt,
+    stampKey: null,
   };
 }
 
@@ -310,6 +339,30 @@ export default function ImageUploadForm() {
     : undefined;
   const isCustomWo = Boolean(customWo);
   const effectiveCustomer = customerName?.trim() || (isCustomWo ? NO_CUSTOMER_FOLDER : "");
+
+  const [stampSettings, setStampSettings] = useState<StampSettings>(readStampSettings);
+  /** Free text for custom WOs; null = not edited yet, so it follows the WO / part. */
+  const [customStampText, setCustomStampText] = useState<string | null>(null);
+  useEffect(() => {
+    try {
+      localStorage.setItem(STAMP_SETTINGS_KEY, JSON.stringify(stampSettings));
+    } catch {
+      /* storage blocked */
+    }
+  }, [stampSettings]);
+  useEffect(() => {
+    setCustomStampText(null);
+  }, [workOrderNumber]);
+
+  const autoLine = autoStampLine(workOrderNumber || "", partNumber || "", rev || "");
+  const stampTextLines = isCustomWo ? (customStampText ?? autoLine).split(/\r?\n/).slice(0, 2) : [autoLine];
+  const buildStamp = (takenAt: number): PhotoStamp | null => {
+    if (!stampSettings.enabled) return null;
+    const lines = [...stampTextLines];
+    if (stampSettings.includeDate) lines.push(formatStampDate(takenAt));
+    return normalizeStamp({ lines });
+  };
+  const stampTemplateKey = `${stampSettings.enabled}|${stampSettings.includeDate}|${stampTextLines.join("\n")}`;
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -531,6 +584,7 @@ export default function ImageUploadForm() {
     const capturedAt = nextCapturedAt();
     const nameStem = buildDefaultStem(partNumber, rev, capturedAt, workOrderNumber);
     const id = newPhotoId();
+    const takenAt = source === "gallery" && file.lastModified ? file.lastModified : Date.now();
     const placeholder: CapturedImage = {
       id,
       original: file,
@@ -545,24 +599,51 @@ export default function ImageUploadForm() {
       sizeBytes: file.size,
       compressMs: 0,
       preparing: true,
+      takenAt,
+      stampKey: null,
     };
     setCapturedImages((prev) => [...prev, placeholder]);
+    void preparePhoto(id, file, isVideo, isVideo ? null : buildStamp(takenAt)).then(() => restampStale());
+  };
 
-    void (async () => {
+  /** Compress (+ stamp) a photo, keep its bytes in memory and save the draft. Also used to re-stamp. */
+  const preparePhoto = async (
+    id: string,
+    file: File | Blob,
+    isVideo: boolean,
+    stamp: PhotoStamp | null,
+  ): Promise<void> => {
+    {
       const prepared = isVideo
-        ? { blob: file as Blob, thumb: null as Blob | null, compressMs: 0 }
-        : await prepareImageForUpload(file);
+        ? { blob: file as Blob, thumb: null as Blob | null, compressMs: 0, stamped: true }
+        : await prepareImageForUpload(file, stamp);
       if (removedIdsRef.current.has(id)) return;
       const ext = prepared.blob === file ? fileExtension(file) : "jpg";
-      const current = imagesRef.current.find((img) => img.id === id) ?? placeholder;
+      const current = imagesRef.current.find((img) => img.id === id);
+      // Already queued or cleared while this ran: never write it back as a draft.
+      if (!current) return;
+      // Show the stamped thumbnail instead of the full-size original.
+      const preview =
+        !isVideo && prepared.thumb && prepared.thumb !== file
+          ? trackPreview(URL.createObjectURL(prepared.thumb))
+          : current.preview;
+      if (preview !== current.preview) releasePreview(current.preview);
+      if (!prepared.stamped) {
+        toast({
+          title: "Couldn't add the text stamp to this photo",
+          description: "The photo will upload without the stamp.",
+        });
+      }
       const ready: CapturedImage = {
         ...current,
         blob: prepared.blob,
         thumb: prepared.thumb,
+        preview,
         ext,
         sizeBytes: prepared.blob.size,
         compressMs: Math.round(prepared.compressMs),
         preparing: false,
+        stampKey: stampKey(stamp),
       };
       // Keep the upload bytes in page memory now: on some tablets Chrome can't read
       // Blobs back later, and the photo is only recoverable while the operator is here.
@@ -573,7 +654,7 @@ export default function ImageUploadForm() {
         reportClientEvent("blob_unreadable", `at capture: ${(err as Error)?.name}: ${(err as Error)?.message ?? ""}`);
       }
       if (!bytes) {
-        releasePreview(current.preview);
+        releasePreview(preview);
         setCapturedImages((prev) => prev.filter((img) => img.id !== id));
         toast({
           title: "This photo could not be saved — take it again",
@@ -604,8 +685,40 @@ export default function ImageUploadForm() {
             : img,
         ),
       );
-    })();
+    }
   };
+
+  // Re-stamp photos still in memory when the WO / part / stamp text changes before upload.
+  const restampingRef = useRef(false);
+  const restampStale = async () => {
+    if (restampingRef.current) return;
+    restampingRef.current = true;
+    try {
+      for (;;) {
+        const stale = imagesRef.current.find(
+          (img) =>
+            img.original &&
+            !img.preparing &&
+            img.stampKey !== null &&
+            !isVideoExt(img.ext) &&
+            stampKey(buildStampRef.current(img.takenAt)) !== img.stampKey,
+        );
+        if (!stale || !stale.original) break;
+        setCapturedImages((prev) => prev.map((img) => (img.id === stale.id ? { ...img, preparing: true } : img)));
+        imagesRef.current = imagesRef.current.map((img) => (img.id === stale.id ? { ...img, preparing: true } : img));
+        await preparePhoto(stale.id, stale.original, false, buildStampRef.current(stale.takenAt));
+      }
+    } finally {
+      restampingRef.current = false;
+    }
+  };
+  const buildStampRef = useRef(buildStamp);
+  buildStampRef.current = buildStamp;
+  useEffect(() => {
+    const timer = window.setTimeout(() => void restampStale(), 600);
+    return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stampTemplateKey]);
 
   const persistCameraImage = async (file: File) => {
     const result = await saveImageToDevice(file);
@@ -837,6 +950,22 @@ export default function ImageUploadForm() {
       toast({
         title: "Still preparing photos",
         description: "Wait a moment for the photos to finish processing, then tap Upload again.",
+      });
+      return;
+    }
+
+    const staleStamp = capturedImages.some(
+      (img) =>
+        img.original &&
+        img.stampKey !== null &&
+        !isVideoExt(img.ext) &&
+        stampKey(buildStamp(img.takenAt)) !== img.stampKey,
+    );
+    if (staleStamp) {
+      void restampStale();
+      toast({
+        title: "Updating the photo stamps",
+        description: "The work order or stamp text changed — tap Upload again in a moment.",
       });
       return;
     }
@@ -1544,6 +1673,67 @@ export default function ImageUploadForm() {
               {form.formState.errors.customerName && (
                 <p className="text-sm text-destructive">{form.formState.errors.customerName.message}</p>
               )}
+            </div>
+
+            <div className="space-y-3 rounded-lg border p-3 sm:p-4" data-testid="section-photo-stamp">
+              <div className="flex items-center justify-between gap-3">
+                <Label htmlFor="stamp-enabled" className="text-base sm:text-lg font-medium">
+                  Add text stamp to photos
+                </Label>
+                <Switch
+                  id="stamp-enabled"
+                  checked={stampSettings.enabled}
+                  onCheckedChange={(enabled) => setStampSettings((s) => ({ ...s, enabled }))}
+                  data-testid="switch-stamp"
+                />
+              </div>
+              {stampSettings.enabled ? (
+                <>
+                  {isCustomWo ? (
+                    <div className="space-y-1.5">
+                      <Label htmlFor="stamp-text" className="text-sm font-medium">
+                        Stamp text <span className="font-normal text-muted-foreground">(custom job — type anything, up to 2 lines)</span>
+                      </Label>
+                      <Textarea
+                        id="stamp-text"
+                        rows={2}
+                        maxLength={240}
+                        value={customStampText ?? autoLine}
+                        onChange={(e) => setCustomStampText(e.target.value)}
+                        className="text-base"
+                        data-testid="input-stamp-text"
+                      />
+                    </div>
+                  ) : null}
+                  <label className="flex items-center gap-2 text-sm">
+                    <Checkbox
+                      checked={stampSettings.includeDate}
+                      onCheckedChange={(v) => setStampSettings((s) => ({ ...s, includeDate: v === true }))}
+                      data-testid="checkbox-stamp-date"
+                    />
+                    Add date &amp; time the photo was taken
+                  </label>
+                  <div className="rounded-md bg-black/80 px-3 py-2 font-semibold text-white text-sm" data-testid="text-stamp-preview">
+                    {stampTextLines.filter((l) => l.trim()).length === 0 && !stampSettings.includeDate ? (
+                      <span className="font-normal text-white/60">Nothing to stamp yet — pick a work order</span>
+                    ) : (
+                      <>
+                        {stampTextLines
+                          .filter((l) => l.trim())
+                          .map((l, i) => (
+                            <div key={i} className="truncate">{l}</div>
+                          ))}
+                        {stampSettings.includeDate ? <div>{formatStampDate(Date.now())}</div> : null}
+                      </>
+                    )}
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    {isCustomWo
+                      ? "Drawn on the bottom-left of each photo before upload. Videos are not stamped."
+                      : "Filled in from the work order and part #. Drawn on the bottom-left of each photo before upload. Videos are not stamped."}
+                  </p>
+                </>
+              ) : null}
             </div>
 
             <div className="space-y-2">

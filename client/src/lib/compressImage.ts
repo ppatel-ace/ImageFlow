@@ -4,6 +4,7 @@
  * falls back to the main thread, then to the original file if decoding fails.
  */
 import { MAX_EDGE_PX, JPEG_QUALITY, THUMB_EDGE_PX, THUMB_QUALITY } from "./compressSettings";
+import { drawStamp, type PhotoStamp } from "./photoStamp";
 
 export type PreparedImage = {
   blob: Blob;
@@ -49,39 +50,40 @@ function getWorker(): Worker | null {
   }
 }
 
-function prepareInWorker(file: Blob): Promise<WorkerReply> | null {
+function prepareInWorker(file: Blob, stamp: PhotoStamp | null): Promise<WorkerReply> | null {
   const w = getWorker();
   if (!w) return null;
   const id = String(++seq);
   return new Promise((resolve) => {
     pending.set(id, resolve);
-    w.postMessage({ id, file });
+    w.postMessage({ id, file, stamp });
   });
 }
 
-async function renderOnMainThread(
-  bitmap: ImageBitmap,
-  maxEdge: number,
-  quality: number,
-): Promise<Blob | null> {
-  const scale = Math.min(1, maxEdge / Math.max(bitmap.width, bitmap.height));
-  const width = Math.max(1, Math.round(bitmap.width * scale));
-  const height = Math.max(1, Math.round(bitmap.height * scale));
-  const canvas = document.createElement("canvas");
-  canvas.width = width;
-  canvas.height = height;
-  const ctx = canvas.getContext("2d");
-  if (!ctx) return null;
-  ctx.drawImage(bitmap, 0, 0, width, height);
+function canvasToJpeg(canvas: HTMLCanvasElement, quality: number): Promise<Blob | null> {
   return new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", quality));
 }
 
-async function prepareOnMainThread(file: Blob): Promise<{ blob: Blob; thumb: Blob } | null> {
+async function prepareOnMainThread(file: Blob, stamp: PhotoStamp | null): Promise<{ blob: Blob; thumb: Blob } | null> {
   if (typeof createImageBitmap !== "function") return null;
   const bitmap = await createImageBitmap(file);
   try {
-    const blob = await renderOnMainThread(bitmap, MAX_EDGE_PX, JPEG_QUALITY);
-    const thumb = await renderOnMainThread(bitmap, THUMB_EDGE_PX, THUMB_QUALITY);
+    const scale = Math.min(1, MAX_EDGE_PX / Math.max(bitmap.width, bitmap.height));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+    canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+    ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    drawStamp(ctx, canvas.width, canvas.height, stamp);
+    const blob = await canvasToJpeg(canvas, JPEG_QUALITY);
+
+    const tScale = Math.min(1, THUMB_EDGE_PX / Math.max(canvas.width, canvas.height));
+    const thumbCanvas = document.createElement("canvas");
+    thumbCanvas.width = Math.max(1, Math.round(canvas.width * tScale));
+    thumbCanvas.height = Math.max(1, Math.round(canvas.height * tScale));
+    thumbCanvas.getContext("2d")?.drawImage(canvas, 0, 0, thumbCanvas.width, thumbCanvas.height);
+    const thumb = await canvasToJpeg(thumbCanvas, THUMB_QUALITY);
     if (!blob || !thumb) return null;
     return { blob, thumb };
   } finally {
@@ -89,22 +91,26 @@ async function prepareOnMainThread(file: Blob): Promise<{ blob: Blob; thumb: Blo
   }
 }
 
-export async function prepareImageForUpload(file: Blob): Promise<PreparedImage> {
+/** `stamped` is false only when the photo couldn't be decoded and the original is sent as-is. */
+export async function prepareImageForUpload(
+  file: Blob,
+  stamp: PhotoStamp | null = null,
+): Promise<PreparedImage & { stamped: boolean }> {
   const started = performance.now();
   try {
-    const viaWorker = prepareInWorker(file);
+    const viaWorker = prepareInWorker(file, stamp);
     if (viaWorker) {
       const reply = await viaWorker;
       if (reply.blob && reply.thumb) {
-        return { blob: reply.blob, thumb: reply.thumb, compressMs: performance.now() - started };
+        return { blob: reply.blob, thumb: reply.thumb, compressMs: performance.now() - started, stamped: true };
       }
     }
-    const main = await prepareOnMainThread(file);
-    if (main) return { ...main, compressMs: performance.now() - started };
+    const main = await prepareOnMainThread(file, stamp);
+    if (main) return { ...main, compressMs: performance.now() - started, stamped: true };
   } catch {
     /* fall through to original */
   }
-  return { blob: file, thumb: file, compressMs: performance.now() - started };
+  return { blob: file, thumb: file, compressMs: performance.now() - started, stamped: !stamp };
 }
 
 /** Back-compat helper: compressed File only. */
