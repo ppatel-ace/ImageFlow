@@ -14,7 +14,8 @@ interface TokenCache {
   expiresAt: number;
 }
 
-let tokenCache: TokenCache | null = null;
+const tokenCaches = new Map<string, TokenCache>();
+const GRAPH_SCOPE = "https://graph.microsoft.us/.default";
 let cachedSiteId: string | null = null;
 let cachedDriveId: string | null = null;
 
@@ -190,9 +191,10 @@ function sitesPermissionHint(status: number, body: string): string {
   );
 }
 
-async function getAccessToken(): Promise<string> {
-  if (tokenCache && tokenCache.expiresAt > Date.now() + 60_000) {
-    return tokenCache.accessToken;
+async function getAccessToken(scope: string = GRAPH_SCOPE): Promise<string> {
+  const cached = tokenCaches.get(scope);
+  if (cached && cached.expiresAt > Date.now() + 60_000) {
+    return cached.accessToken;
   }
 
   const tenantId = requireEnv("AZURE_TENANT_ID");
@@ -202,7 +204,7 @@ async function getAccessToken(): Promise<string> {
   const params = new URLSearchParams({
     grant_type: "client_credentials",
     client_id: clientId,
-    scope: "https://graph.microsoft.us/.default",
+    scope,
   });
 
   applyClientCredential(params, tokenUrl, clientId);
@@ -240,11 +242,11 @@ async function getAccessToken(): Promise<string> {
     throw new Error("Azure token response missing access_token");
   }
 
-  tokenCache = {
+  tokenCaches.set(scope, {
     accessToken: data.access_token,
     expiresAt: Date.now() + (data.expires_in ?? 3600) * 1000,
-  };
-  return tokenCache.accessToken;
+  });
+  return data.access_token;
 }
 
 type GraphRequestInit = RequestInit & { timeoutMs?: number };
@@ -1133,6 +1135,134 @@ export async function sweepTreeCheckedOutByApp(): Promise<CheckinSweepResult> {
     );
   }
   return result;
+}
+
+/** Delete one item by id (used to undo an upload SharePoint silently renamed). */
+export async function deleteSharePointItem(itemId: string): Promise<void> {
+  const driveId = await resolveDrive();
+  const res = await graphFetchWithRetry(`/drives/${driveId}/items/${itemId}`, { method: "DELETE" });
+  if (!res.ok && res.status !== 404) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Failed to delete SharePoint item ${itemId} (${res.status}): ${text.slice(0, 200)}`);
+  }
+  await res.text().catch(() => "");
+}
+
+// ── SharePoint REST: files checked out with no checked-in version ────────────
+// Graph cannot see these (only the person holding the checkout can), yet they still
+// own the name: an upload of the same name gets 423 or is silently saved as "name (1)".
+
+function sharePointHost(): string {
+  return process.env.SHAREPOINT_SITE_HOSTNAME?.trim() || "aceelectronics.sharepoint.us";
+}
+
+/** `path` is relative to the site, e.g. "/_api/web/...". */
+async function spRestFetch(path: string, init: RequestInit = {}): Promise<Response> {
+  const host = sharePointHost();
+  const sitePath = (process.env.SHAREPOINT_SITE_PATH?.trim() || "/sites/jobtravelerphotos").replace(/\/$/, "");
+  const token = await getAccessToken(`https://${host}/.default`);
+  for (let attempt = 1; ; attempt++) {
+    const headers = new Headers(init.headers);
+    headers.set("Authorization", `Bearer ${token}`);
+    headers.set("Accept", "application/json;odata=nometadata");
+    const url = `https://${host}${sitePath.startsWith("/") ? sitePath : `/${sitePath}`}${path}`;
+    const res = await fetch(url, { ...init, headers, signal: timeoutSignal(METADATA_TIMEOUT_MS) });
+    if ((res.status === 429 || res.status === 503) && attempt < 5) {
+      const waitMs = retryAfterMs(res, attempt);
+      await res.text().catch(() => "");
+      await sleep(waitMs);
+      continue;
+    }
+    return res;
+  }
+}
+
+let cachedLibraryRoot: string | null = null;
+
+/** Server-relative URL of the library root, e.g. "/sites/jobtravelerphotos/Documents". */
+async function libraryRootPath(): Promise<string> {
+  if (cachedLibraryRoot) return cachedLibraryRoot;
+  const driveId = await resolveDrive();
+  const res = await graphFetchWithRetry(`/drives/${driveId}?$select=webUrl`);
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Failed to read library URL (${res.status}): ${text.slice(0, 200)}`);
+  }
+  const { webUrl } = (await res.json()) as { webUrl: string };
+  cachedLibraryRoot = decodeURIComponent(new URL(webUrl).pathname).replace(/\/$/, "");
+  return cachedLibraryRoot;
+}
+
+function restLiteral(value: string): string {
+  return encodeURIComponent(value.replace(/'/g, "''"));
+}
+
+/** Files in a folder that nobody but their checkout holder can see. */
+export async function countHiddenCheckouts(folderPath: string): Promise<number> {
+  const full = `${await libraryRootPath()}/${folderPath}`;
+  const res = await spRestFetch(
+    `/_api/web/GetFolderByServerRelativePath(decodedurl='${restLiteral(full)}')` +
+      `?$select=ItemCount,Files/Name,Folders/Name&$expand=Files,Folders`,
+  );
+  if (res.status === 404) {
+    await res.text().catch(() => "");
+    return 0;
+  }
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Failed to read SharePoint folder ${full} (${res.status}): ${text.slice(0, 200)}`);
+  }
+  const f = (await res.json()) as { ItemCount?: number; Files?: unknown[]; Folders?: unknown[] };
+  return Math.max((f.ItemCount ?? 0) - (f.Files?.length ?? 0) - (f.Folders?.length ?? 0), 0);
+}
+
+export type HiddenCheckout = { path: string; checkedOutBy: string };
+
+/** All never-checked-in files in the library; null when the app lacks Full Control. */
+export async function listHiddenCheckouts(): Promise<HiddenCheckout[] | null> {
+  const root = await libraryRootPath();
+  const res = await spRestFetch(`/_api/web/GetList('${restLiteral(root)}')/GetCheckedOutFiles()?$expand=CheckedOutBy`);
+  if (res.status === 401 || res.status === 403) {
+    await res.text().catch(() => "");
+    return null;
+  }
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Failed to list checked-out files (${res.status}): ${text.slice(0, 200)}`);
+  }
+  const rows = ((await res.json()) as {
+    value?: { ServerRelativePath?: { DecodedUrl?: string }; CheckedOutBy?: { Title?: string } }[];
+  }).value ?? [];
+  return rows
+    .map((r) => ({
+      path: (r.ServerRelativePath?.DecodedUrl ?? "").replace(`${root}/`, ""),
+      checkedOutBy: r.CheckedOutBy?.Title ?? "unknown",
+    }))
+    .filter((r) => r.path);
+}
+
+/** Take the checkout from whoever holds it, then publish it (needs Full Control). */
+export async function takeOverAndCheckIn(path: string, comment: string): Promise<void> {
+  const root = await libraryRootPath();
+  const full = `${root}/${path}`;
+  const take = await spRestFetch(
+    `/_api/web/GetList('${restLiteral(root)}')/GetCheckedOutFiles()/GetByPath(decodedurl='${restLiteral(full)}')/TakeOverCheckOut()`,
+    { method: "POST" },
+  );
+  if (!take.ok) {
+    const text = await take.text().catch(() => "");
+    throw new Error(`Take over checkout failed for ${path} (${take.status}): ${text.slice(0, 200)}`);
+  }
+  await take.text().catch(() => "");
+  const checkin = await spRestFetch(
+    `/_api/web/GetFileByServerRelativePath(decodedurl='${restLiteral(full)}')/CheckIn(comment='${restLiteral(comment)}',checkintype=1)`,
+    { method: "POST" },
+  );
+  if (!checkin.ok) {
+    const text = await checkin.text().catch(() => "");
+    throw new Error(`Check-in failed for ${path} (${checkin.status}): ${text.slice(0, 200)}`);
+  }
+  await checkin.text().catch(() => "");
 }
 
 /** Non-secret status for /health */

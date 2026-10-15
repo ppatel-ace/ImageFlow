@@ -22,6 +22,7 @@ import {
   classifyDriveFile,
   mapDrivePath,
   nameKey,
+  normalizePhotoName,
   planRenames,
   resolveCustomerFolder,
   uniqueFileName,
@@ -302,8 +303,8 @@ async function runScan(runId: string, rootFolderId: string, skipFolders: string[
       const target = mapDrivePath(node.folders);
       if (target.kind === "mapped") {
         const resolved = resolveCustomerFolder(target.driveCustomer, afterRename[target.dept]);
-        const folder = `${target.dept}/${resolved.name}/${target.workOrder}`;
-        const fileName = uniqueFileName(folder, child.name, takenNames);
+        const folder = [target.dept, resolved.name, target.workOrder, ...target.subfolders].join("/");
+        const fileName = uniqueFileName(folder, normalizePhotoName(child.name, child.mimeType), takenNames);
         plan.totals.mapped++;
         plan.byDept[target.dept] = (plan.byDept[target.dept] ?? 0) + 1;
         const ck = `${target.dept}|${resolved.name}`;
@@ -312,7 +313,7 @@ async function runScan(runId: string, rootFolderId: string, skipFolders: string[
         customers.set(ck, entry);
         pending.push({ ...base, kind: "mapped", dept: target.dept, customer: resolved.name, targetFolder: folder, fileName, status: "pending", lastError: null });
       } else {
-        const fileName = uniqueFileName(target.folder, child.name, takenNames);
+        const fileName = uniqueFileName(target.folder, normalizePhotoName(child.name, child.mimeType), takenNames);
         plan.totals.oldPhotos++;
         const group = target.folder.split("/").slice(0, 3).join("/");
         oldFolders.set(group, (oldFolders.get(group) ?? 0) + 1);

@@ -58,23 +58,60 @@ export function cleanSegment(value: string): string {
 export type FileClass = { copy: true } | { copy: false; reason: string };
 
 const JUNK_RE = /^(desktop\.ini|thumbs\.db|\.ds_store|~\$.*)$/i;
+// Phones and Drive often report HEIC/RAW photos as application/octet-stream.
+const PHOTO_EXT_RE = /\.(jpe?g|jfif|png|gif|bmp|tiff?|heic|heif|webp|dng|cr2|nef|arw)$/i;
 
 export function classifyDriveFile(name: string, mimeType: string): FileClass {
   if (JUNK_RE.test(name)) return { copy: false, reason: "System file (not a photo)" };
   if (mimeType.startsWith("application/vnd.google-apps.")) return { copy: false, reason: "Google Docs item (not a photo)" };
-  if (mimeType.startsWith("image/")) return { copy: true };
+  if (mimeType.startsWith("image/") || PHOTO_EXT_RE.test(name)) return { copy: true };
   return { copy: false, reason: `Not a photo (${mimeType || "unknown type"})` };
 }
 
+const NOTE_AFTER_EXT_RE = /^(.*?)\.(jpe?g|jfif|png|gif|bmp|tiff?|heic|heif|webp)\s+(.+)$/i;
+const EXT_BY_MIME: Record<string, string> = {
+  "image/jpeg": "jpg",
+  "image/png": "png",
+  "image/gif": "gif",
+  "image/bmp": "bmp",
+  "image/tiff": "tif",
+  "image/heic": "heic",
+  "image/heif": "heif",
+  "image/webp": "webp",
+};
+
+/**
+ * Keep the photo extension last so SharePoint previews it:
+ * "x.jpg AK APPROVED" → "x AK APPROVED.jpg"; "x" (image/jpeg) → "x.jpg".
+ */
+export function normalizePhotoName(name: string, mimeType: string): string {
+  if (PHOTO_EXT_RE.test(name)) return name;
+  const note = name.match(NOTE_AFTER_EXT_RE);
+  if (note) return `${note[1]} ${note[3].trim()}.${note[2]}`;
+  const ext = EXT_BY_MIME[mimeType.toLowerCase()];
+  return ext ? `${name}.${ext}` : name;
+}
+
 export type MappedTarget =
-  | { kind: "mapped"; dept: Department; driveCustomer: string; workOrder: string }
+  | { kind: "mapped"; dept: Department; driveCustomer: string; workOrder: string; subfolders: string[] }
   | { kind: "old_photos"; folder: string };
 
-/** `folders` = Drive folder names from the root down to (excluding) the file. */
+/**
+ * `folders` = Drive folder names from the root down to (excluding) the file.
+ * Customer/Dept/WO[/extra…] maps; extra folders below the WO are kept under it.
+ */
 export function mapDrivePath(folders: string[]): MappedTarget {
-  if (folders.length === 3) {
+  if (folders.length >= 3) {
     const dept = canonicalDept(folders[1]);
-    if (dept) return { kind: "mapped", dept, driveCustomer: folders[0], workOrder: cleanSegment(folders[2]) };
+    if (dept) {
+      return {
+        kind: "mapped",
+        dept,
+        driveCustomer: folders[0],
+        workOrder: cleanSegment(folders[2]),
+        subfolders: folders.slice(3).map(cleanSegment),
+      };
+    }
   }
   return { kind: "old_photos", folder: [OLD_PHOTOS_FOLDER, ...folders.map(cleanSegment)].join("/") };
 }
