@@ -10,12 +10,15 @@ import { Card } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Command, CommandEmpty, CommandGroup, CommandItem, CommandList } from "@/components/ui/command";
-import { Camera, Upload, FolderOpen, CheckCircle2, Loader2, Image as ImageIcon, Download, Check, RefreshCw, ChevronsUpDown, X } from "lucide-react";
+import { Camera, Upload, FolderOpen, CheckCircle2, Loader2, Image as ImageIcon, Download, Check, RefreshCw, ChevronsUpDown, X, Video, Plus } from "lucide-react";
 import { format } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
 import CustomCamera from "@/components/CustomCamera";
+import VideoRecorder, { canRecordInApp } from "@/components/VideoRecorder";
+import CustomWorkOrderDialog, { type CustomWorkOrder } from "@/components/CustomWorkOrderDialog";
+import { MAX_VIDEO_BYTES, isVideoBlob, isVideoExt, videoExtension } from "@/lib/media";
 import { shouldUseCustomCamera } from "@/lib/deviceDetection";
 import { saveImageToDevice } from "@/lib/saveImageToDevice";
 import { prepareImageForUpload } from "@/lib/compressImage";
@@ -49,9 +52,10 @@ const sanitizePath = (value: string): string => {
 
 const uploadFormSchema = z.object({
   dept: z.string().min(1, "Dept is required"),
-  partNumber: z.string().min(1, "Part # is required"),
+  // Required for Sage work orders, optional for custom ones (checked in the upload handlers).
+  partNumber: z.string(),
   rev: z.string(),
-  customerName: z.string().min(1, "Customer name is required"),
+  customerName: z.string(),
   workOrderNumber: z.string().min(1, "Work Order # is required"),
 });
 
@@ -84,10 +88,19 @@ function nextCapturedAt(): string {
   return format(new Date(now), "yyyyMMdd-HHmmss-SSS");
 }
 
-/** Blank Rev → "PARTRev-<time>", the same shape as the legacy Drive file names. */
-function buildDefaultStem(part: string, rev: string, capturedAt: string): string {
+/** Blank Rev → "PARTRev-<time>", the same shape as the legacy Drive file names. No part (custom WO) → "WO-<time>". */
+function buildDefaultStem(part: string, rev: string, capturedAt: string, workOrder: string): string {
+  if (!part.trim()) return `${sanitizePath(workOrder || "image")}-${capturedAt}`;
   const cleanRev = rev.trim() ? sanitizePath(rev) : "";
-  return `${sanitizePath(part || "image")}Rev${cleanRev}-${capturedAt}`;
+  return `${sanitizePath(part)}Rev${cleanRev}-${capturedAt}`;
+}
+
+const NO_CUSTOMER_FOLDER = "No Customer";
+
+/** Same comparison as the server: case-insensitive, trailing zeros ignored. */
+function workOrderKey(wo: string): string {
+  const trimmed = wo.trim().toUpperCase().replace(/\s+/g, " ");
+  return /[1-9]/.test(trimmed) ? trimmed.replace(/0+$/, "") : trimmed;
 }
 
 type PartOption = {
@@ -139,6 +152,7 @@ function writeSavedForm(values: UploadFormData): void {
 }
 
 function fileExtension(file: Blob): string {
+  if (isVideoBlob(file)) return videoExtension(file);
   const name = file instanceof File ? file.name : "";
   const fromName = name.split(".").pop();
   if (fromName && fromName !== name) return fromName.toLowerCase();
@@ -237,12 +251,14 @@ export default function ImageUploadForm() {
   const [lastAutoCheck, setLastAutoCheck] = useState<string | null>(null);
   const [lastManualCheck, setLastManualCheck] = useState<string | null>(null);
   const [showCustomCamera, setShowCustomCamera] = useState(false);
+  const [showVideoRecorder, setShowVideoRecorder] = useState(false);
+  const [customDialogOpen, setCustomDialogOpen] = useState(false);
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
   // Prevent body scroll when camera is open
   useEffect(() => {
-    if (showCustomCamera) {
+    if (showCustomCamera || showVideoRecorder) {
       document.body.style.overflow = 'hidden';
     } else {
       document.body.style.overflow = '';
@@ -250,7 +266,7 @@ export default function ImageUploadForm() {
     return () => {
       document.body.style.overflow = '';
     };
-  }, [showCustomCamera]);
+  }, [showCustomCamera, showVideoRecorder]);
 
   // Clear old localStorage entries that are no longer used (auto-filled fields)
   useEffect(() => {
@@ -265,6 +281,13 @@ export default function ImageUploadForm() {
     staleTime: 60_000,
     refetchOnWindowFocus: true,
   });
+
+  const { data: customData, refetch: refetchCustomWorkOrders } = useQuery<{ items: CustomWorkOrder[] }>({
+    queryKey: ['/api/custom-work-orders'],
+    staleTime: 60_000,
+    refetchOnWindowFocus: true,
+  });
+  const customWorkOrders = customData?.items ?? [];
 
   const [savedForm] = useState(readSavedForm);
 
@@ -282,6 +305,11 @@ export default function ImageUploadForm() {
   // Watch all form fields efficiently
   const { dept, rev, workOrderNumber, partNumber, customerName } = form.watch();
   const [prevWorkOrder, setPrevWorkOrder] = useState(workOrderNumber);
+  const customWo = workOrderNumber
+    ? customWorkOrders.find((c) => workOrderKey(c.workOrderNumber) === workOrderKey(workOrderNumber))
+    : undefined;
+  const isCustomWo = Boolean(customWo);
+  const effectiveCustomer = customerName?.trim() || (isCustomWo ? NO_CUSTOMER_FOLDER : "");
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -318,12 +346,12 @@ export default function ImageUploadForm() {
 
   useEffect(() => {
     try {
-      if (showCustomCamera) sessionStorage.setItem(CAMERA_OPEN_KEY, "1");
+      if (showCustomCamera || showVideoRecorder) sessionStorage.setItem(CAMERA_OPEN_KEY, "1");
       else sessionStorage.removeItem(CAMERA_OPEN_KEY);
     } catch {
       /* sessionStorage blocked */
     }
-  }, [showCustomCamera]);
+  }, [showCustomCamera, showVideoRecorder]);
 
   // Auto-populate part number fields from selection
   const handlePartNumberSelect = (index: number) => {
@@ -391,6 +419,20 @@ export default function ImageUploadForm() {
       cancelled = true;
     };
   }, [workOrderNumber, prevWorkOrder, form, partsVersion]);
+
+  // A custom WO carries its own (optional) customer / part; fill only what's still empty.
+  useEffect(() => {
+    if (!customWo) return;
+    if (!form.getValues("customerName") && customWo.customerName) {
+      form.setValue("customerName", customWo.customerName);
+    }
+    if (!form.getValues("partNumber") && customWo.partNumber) {
+      form.setValue("partNumber", customWo.partNumber);
+      form.setValue("rev", customWo.rev || "");
+      setPartNumberSearch(customWo.partNumber);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [customWo?.id, workOrderNumber]);
 
   const listedPart = partNumberOptions.find((p) => partKey(p.partNumber) === partKey(partNumber || ""));
   const isManualPart = Boolean(partNumber?.trim()) && !listedPart;
@@ -469,9 +511,25 @@ export default function ImageUploadForm() {
     };
   }, []);
 
-  const addCapturedImage = (file: File, source: "camera" | "gallery") => {
+  const addCapturedImage = (picked: File, source: "camera" | "gallery") => {
+    const isVideo = isVideoBlob(picked) || isVideoExt(picked.name.split(".").pop());
+    if (isVideo && picked.size > MAX_VIDEO_BYTES) {
+      toast({
+        title: "Video is too large",
+        description: `${picked.name || "This video"} is ${(picked.size / 1048576).toFixed(0)} MB. Videos must be 100 MB or smaller — record a shorter clip (up to 2 minutes) with Record Video.`,
+        variant: "destructive",
+      });
+      return;
+    }
+    // Some galleries hand back videos with no MIME type; the server needs one to accept the file.
+    const file =
+      isVideo && !picked.type
+        ? new File([picked], picked.name, {
+            type: { webm: "video/webm", mov: "video/quicktime" }[videoExtension(picked)] ?? "video/mp4",
+          })
+        : picked;
     const capturedAt = nextCapturedAt();
-    const nameStem = buildDefaultStem(partNumber, rev, capturedAt);
+    const nameStem = buildDefaultStem(partNumber, rev, capturedAt, workOrderNumber);
     const id = newPhotoId();
     const placeholder: CapturedImage = {
       id,
@@ -491,7 +549,9 @@ export default function ImageUploadForm() {
     setCapturedImages((prev) => [...prev, placeholder]);
 
     void (async () => {
-      const prepared = await prepareImageForUpload(file);
+      const prepared = isVideo
+        ? { blob: file as Blob, thumb: null as Blob | null, compressMs: 0 }
+        : await prepareImageForUpload(file);
       if (removedIdsRef.current.has(id)) return;
       const ext = prepared.blob === file ? fileExtension(file) : "jpg";
       const current = imagesRef.current.find((img) => img.id === id) ?? placeholder;
@@ -561,11 +621,12 @@ export default function ImageUploadForm() {
   const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     const source: "camera" | "gallery" =
-      e.target.id === "camera-input" ? "camera" : "gallery";
+      e.target.id === "camera-input" || e.target.id === "video-input" ? "camera" : "gallery";
 
     if (files && files.length > 0) {
       Array.from(files).forEach((file) => {
-        if (source === "camera") {
+        // Native copies are base64-encoded in memory — fine for photos, too heavy for video.
+        if (source === "camera" && !isVideoBlob(file)) {
           void persistCameraImage(file);
         }
         addCapturedImage(file, source);
@@ -579,6 +640,32 @@ export default function ImageUploadForm() {
   const handleCameraCapture = (file: File) => {
     void persistCameraImage(file);
     addCapturedImage(file, "camera");
+  };
+
+  const handleVideoCapture = (file: File) => {
+    trackFeature("imageflow.video.recorded", "Record video");
+    addCapturedImage(file, "camera");
+  };
+
+  const selectWorkOrder = (wo: string) => {
+    setWorkOrderSearch(wo);
+    form.setValue("workOrderNumber", wo);
+    setWorkOrderOpen(false);
+  };
+
+  const removeCustomWorkOrder = async (wo: CustomWorkOrder) => {
+    try {
+      const res = await fetch(`/api/custom-work-orders/${encodeURIComponent(wo.id)}`, {
+        method: "DELETE",
+        credentials: "include",
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.error || `HTTP ${res.status}`);
+      if (workOrderKey(wo.workOrderNumber) === workOrderKey(workOrderNumber || "")) selectWorkOrder("");
+      await refetchCustomWorkOrders();
+      toast({ title: `Removed custom work order ${wo.workOrderNumber}`, description: "Files already in SharePoint are not touched." });
+    } catch (err) {
+      toast({ title: "Could not remove work order", description: (err as Error).message, variant: "destructive" });
+    }
   };
 
   const discardImages = (images: CapturedImage[]) => {
@@ -636,24 +723,29 @@ export default function ImageUploadForm() {
       let changed = false;
       const next = prev.map((img) => {
         if (img.nameLocked) return img;
-        const nameStem = buildDefaultStem(partNumber, rev, img.capturedAt);
+        const nameStem = buildDefaultStem(partNumber, rev, img.capturedAt, workOrderNumber);
         if (nameStem === img.nameStem) return img;
         changed = true;
         return { ...img, nameStem };
       });
       return changed ? next : prev;
     });
-  }, [partNumber, rev]);
+  }, [partNumber, rev, workOrderNumber]);
+
+  const missingRequired = !dept || !workOrderNumber || (!isCustomWo && (!customerName || !partNumber));
+  const missingMessage = isCustomWo
+    ? "Pick a department and work order, and capture at least one photo or video."
+    : "Please fill in all fields and capture at least one photo or video.";
 
   const generateFilename = (stem: string, fileExtensionName: string) => {
     return `${sanitizePath(stem)}.${fileExtensionName}`;
   };
 
   const handleSaveLocally = async () => {
-    if (capturedImages.length === 0 || !dept || !customerName || !workOrderNumber || !partNumber) {
+    if (capturedImages.length === 0 || missingRequired) {
       toast({
         title: "Missing Information",
-        description: "Please fill in all fields and capture at least one image before saving.",
+        description: missingMessage,
         variant: "destructive",
       });
       return;
@@ -661,7 +753,7 @@ export default function ImageUploadForm() {
 
     setIsSavingLocal(true);
     trackFeature("imageflow.save_local", "Save photos locally");
-    const sanitizedCustomerName = sanitizePath(customerName);
+    const sanitizedCustomerName = sanitizePath(effectiveCustomer);
     const stems = uniquifyStems(capturedImages);
     
     try {
@@ -732,10 +824,10 @@ export default function ImageUploadForm() {
   };
 
   const handleSharePointUpload = async () => {
-    if (capturedImages.length === 0 || !dept || !customerName || !workOrderNumber || !partNumber) {
+    if (capturedImages.length === 0 || missingRequired) {
       toast({
         title: "Missing Information",
-        description: "Please fill in all fields and capture at least one image before uploading.",
+        description: missingMessage,
         variant: "destructive",
       });
       return;
@@ -757,9 +849,9 @@ export default function ImageUploadForm() {
       const records = capturedImages.map((img) =>
         capturedToRecord(img, "queued", {
           dept,
-          customerName,
+          customerName: effectiveCustomer,
           workOrderNumber,
-          partNumber,
+          partNumber: partNumber?.trim() || "",
           rev: rev || "",
           imageName: stems[img.id],
         }),
@@ -969,9 +1061,17 @@ export default function ImageUploadForm() {
     return wo;
   };
   
-  const workOrderMatches = workOrderNumber && workOrders.some(wo => 
-    normalizeWorkOrder(wo) === normalizeWorkOrder(workOrderNumber)
+  const workOrderMatches =
+    isCustomWo ||
+    Boolean(workOrderNumber && workOrders.some((wo) => normalizeWorkOrder(wo) === normalizeWorkOrder(workOrderNumber)));
+  const searchKey = workOrderKey(workOrderSearch || "");
+  const filteredCustom = customWorkOrders.filter((c) =>
+    `${c.workOrderNumber} ${c.customerName} ${c.partNumber} ${c.note}`.toLowerCase().includes((workOrderSearch || "").toLowerCase()),
   );
+  const typedIsKnown =
+    !searchKey ||
+    workOrders.some((wo) => workOrderKey(wo) === searchKey) ||
+    customWorkOrders.some((c) => workOrderKey(c.workOrderNumber) === searchKey);
 
   return (
     <div className="w-full max-w-3xl mx-auto px-3 sm:px-4 md:px-6 space-y-4 sm:space-y-6">
@@ -1120,8 +1220,8 @@ export default function ImageUploadForm() {
                   <ChevronsUpDown className="h-4 w-4" />
                 </button>
                 {workOrderOpen && (
-                  <div className="absolute z-50 w-full mt-1 bg-popover border rounded-md shadow-md max-h-60 overflow-auto">
-                    {workOrders.length === 0 ? (
+                  <div className="absolute z-50 w-full mt-1 bg-popover border rounded-md shadow-md max-h-72 overflow-auto">
+                    {workOrders.length === 0 && customWorkOrders.length === 0 ? (
                       <div className="px-3 py-2 text-sm text-muted-foreground">
                         {isFetchingWorkOrders
                           ? "Loading work orders…"
@@ -1140,9 +1240,7 @@ export default function ImageUploadForm() {
                               )}
                               onMouseDown={(e) => {
                                 e.preventDefault();
-                                setWorkOrderSearch(wo);
-                                form.setValue("workOrderNumber", wo);
-                                setWorkOrderOpen(false);
+                                selectWorkOrder(wo);
                               }}
                             >
                               <Check
@@ -1154,18 +1252,98 @@ export default function ImageUploadForm() {
                               {wo}
                             </div>
                           ))}
-                        {workOrders.filter((wo) =>
-                          wo.toLowerCase().includes(workOrderSearch.toLowerCase())
-                        ).length === 0 && (
-                          <div className="px-3 py-2 text-sm text-muted-foreground">
-                            No work order matches “{workOrderSearch}”.
+                        {filteredCustom.length > 0 ? (
+                          <div className="px-3 pt-2 pb-1 text-xs font-sans font-medium uppercase tracking-wide text-muted-foreground border-t">
+                            Custom work orders
                           </div>
-                        )}
+                        ) : null}
+                        {filteredCustom.map((c) => {
+                          const selected = workOrderKey(workOrderNumber || "") === workOrderKey(c.workOrderNumber);
+                          return (
+                            <div
+                              key={`custom-${c.id}`}
+                              className={cn(
+                                "px-3 py-2 cursor-pointer hover-elevate text-sm flex items-center",
+                                selected && "bg-accent"
+                              )}
+                              onMouseDown={(e) => {
+                                e.preventDefault();
+                                selectWorkOrder(c.workOrderNumber);
+                              }}
+                              data-testid={`option-custom-wo-${c.id}`}
+                            >
+                              <Check className={cn("mr-2 h-4 w-4 shrink-0", selected ? "opacity-100" : "opacity-0")} />
+                              <span className="min-w-0 flex-1">
+                                <span className="flex items-center gap-2">
+                                  <span className="font-mono truncate">{c.workOrderNumber}</span>
+                                  <span className="rounded bg-purple-500/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-purple-700 dark:text-purple-300">
+                                    Custom
+                                  </span>
+                                </span>
+                                <span className="block truncate text-xs text-muted-foreground">
+                                  {[c.customerName || NO_CUSTOMER_FOLDER, c.partNumber, c.note].filter(Boolean).join(" · ")}
+                                  {c.createdBy ? ` — by ${c.createdBy}` : ""}
+                                </span>
+                              </span>
+                              {c.canDelete ? (
+                                <button
+                                  type="button"
+                                  className="ml-2 rounded p-1 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                                  aria-label={`Remove custom work order ${c.workOrderNumber}`}
+                                  title="Remove this custom work order"
+                                  data-testid={`button-remove-custom-wo-${c.id}`}
+                                  onMouseDown={(e) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    void removeCustomWorkOrder(c);
+                                  }}
+                                >
+                                  <X className="h-4 w-4" />
+                                </button>
+                              ) : null}
+                            </div>
+                          );
+                        })}
+                        {workOrders.filter((wo) => wo.toLowerCase().includes(workOrderSearch.toLowerCase())).length === 0 &&
+                          filteredCustom.length === 0 && (
+                            <div className="px-3 py-2 text-sm text-muted-foreground">
+                              No work order matches “{workOrderSearch}”.
+                            </div>
+                          )}
                       </>
                     )}
+                    <div
+                      className="px-3 py-2 cursor-pointer hover-elevate text-sm flex items-center border-t text-primary font-medium"
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        setWorkOrderOpen(false);
+                        setCustomDialogOpen(true);
+                      }}
+                      data-testid="option-create-custom-wo"
+                    >
+                      <Plus className="mr-2 h-4 w-4 shrink-0" />
+                      {!typedIsKnown ? `Create custom work order “${workOrderSearch.trim()}”` : "Create custom work order"}
+                    </div>
                   </div>
                 )}
               </div>
+              {isCustomWo ? (
+                <p className="text-sm text-purple-700 dark:text-purple-300" data-testid="text-custom-wo">
+                  Custom work order{customWo?.note ? ` — ${customWo.note}` : ""}. Customer and Part # are optional.
+                </p>
+              ) : workOrderNumber?.trim() && !workOrderMatches && !workOrderOpen ? (
+                <p className="text-sm text-amber-700 dark:text-amber-300" data-testid="text-wo-unknown">
+                  {workOrderNumber} isn't a Sage work order.{" "}
+                  <button
+                    type="button"
+                    className="font-medium underline"
+                    onClick={() => setCustomDialogOpen(true)}
+                    data-testid="button-create-custom-wo-inline"
+                  >
+                    Create it as a custom work order
+                  </button>
+                </p>
+              ) : null}
               {form.formState.errors.workOrderNumber && (
                 <p className="text-sm text-destructive">{form.formState.errors.workOrderNumber.message}</p>
               )}
@@ -1173,7 +1351,12 @@ export default function ImageUploadForm() {
 
             <div className="space-y-2">
               <Label htmlFor="partNumber" className="text-base sm:text-lg font-medium">
-                Part # <span className="text-destructive">*</span>
+                Part #{" "}
+                {isCustomWo ? (
+                  <span className="text-sm font-normal text-muted-foreground">(optional)</span>
+                ) : (
+                  <span className="text-destructive">*</span>
+                )}
               </Label>
               <div className="relative">
                 <Input
@@ -1190,7 +1373,9 @@ export default function ImageUploadForm() {
                   placeholder={
                     !workOrderNumber
                       ? "Select work order first"
-                      : onlyServiceLines
+                      : isCustomWo && partNumberOptions.length === 0
+                        ? "Optional — type a part number"
+                        : onlyServiceLines
                         ? "Type the real part number"
                         : partNumberOptions.length > 0
                           ? `Type or select (${partNumberOptions.length} available)`
@@ -1340,15 +1525,21 @@ export default function ImageUploadForm() {
 
             <div className="space-y-2">
               <Label htmlFor="customerName" className="text-base sm:text-lg font-medium">
-                Customer Name <span className="text-destructive">*</span>
+                Customer Name{" "}
+                {isCustomWo ? (
+                  <span className="text-sm font-normal text-muted-foreground">(optional)</span>
+                ) : (
+                  <span className="text-destructive">*</span>
+                )}
               </Label>
               <Input
                 id="customerName"
                 data-testid="input-customer-name"
                 {...form.register("customerName")}
-                placeholder="Auto-filled from Excel"
-                className="min-h-12 sm:min-h-14 text-base bg-muted"
-                readOnly
+                placeholder={isCustomWo ? `Optional — blank files under "${NO_CUSTOMER_FOLDER}"` : "Auto-filled from Excel"}
+                className={cn("min-h-12 sm:min-h-14 text-base", !isCustomWo && "bg-muted")}
+                readOnly={!isCustomWo}
+                maxLength={200}
               />
               {form.formState.errors.customerName && (
                 <p className="text-sm text-destructive">{form.formState.errors.customerName.message}</p>
@@ -1357,9 +1548,9 @@ export default function ImageUploadForm() {
 
             <div className="space-y-2">
               <Label className="text-base sm:text-lg font-medium">
-                Image <span className="text-destructive">*</span>
+                Photo / Video <span className="text-destructive">*</span>
               </Label>
-              <div className="flex flex-col sm:flex-row gap-3">
+              <div className="flex flex-col sm:flex-row sm:flex-wrap gap-3">
                 <input
                   type="file"
                   accept="image/*"
@@ -1371,7 +1562,16 @@ export default function ImageUploadForm() {
                 />
                 <input
                   type="file"
-                  accept="image/*"
+                  accept="video/*"
+                  capture="environment"
+                  onChange={handleImageSelect}
+                  className="hidden"
+                  id="video-input"
+                  data-testid="input-video"
+                />
+                <input
+                  type="file"
+                  accept="image/*,video/*"
                   onChange={handleImageSelect}
                   className="hidden"
                   id="gallery-input"
@@ -1413,12 +1613,28 @@ export default function ImageUploadForm() {
                   variant="outline"
                   size="lg"
                   className="w-full sm:flex-1 min-h-12 sm:min-h-14"
+                  onClick={() => {
+                    trackFeature("imageflow.video.open", "Open video recorder");
+                    if (canRecordInApp()) setShowVideoRecorder(true);
+                    else document.getElementById("video-input")?.click();
+                  }}
+                  disabled={!workOrderMatches}
+                  data-testid="button-video"
+                >
+                  <Video className="w-5 h-5 mr-2" />
+                  Record Video
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="lg"
+                  className="w-full sm:flex-1 min-h-12 sm:min-h-14"
                   onClick={() => document.getElementById("gallery-input")?.click()}
                   disabled={!workOrderMatches}
                   data-testid="button-gallery"
                 >
                   <ImageIcon className="w-5 h-5 mr-2" />
-                  Choose Image
+                  Choose Photo / Video
                 </Button>
               </div>
             </div>
@@ -1429,7 +1645,7 @@ export default function ImageUploadForm() {
           <Card className="p-4 sm:p-6">
             <div className="space-y-3 sm:space-y-4">
               <div className="flex items-center justify-between">
-                <h3 className="text-base sm:text-lg font-medium">Captured Images ({capturedImages.length})</h3>
+                <h3 className="text-base sm:text-lg font-medium">Captured Photos &amp; Videos ({capturedImages.length})</h3>
                 <Button
                   type="button"
                   variant="ghost"
@@ -1445,7 +1661,21 @@ export default function ImageUploadForm() {
                 {capturedImages.map((image, index) => (
                   <div key={image.id} className="relative group space-y-2">
                     <div className="relative aspect-square bg-muted rounded-lg overflow-hidden">
-                      {image.preview ? (
+                      {image.preview && isVideoExt(image.ext) ? (
+                        <>
+                          <video
+                            src={image.preview}
+                            muted
+                            playsInline
+                            preload="metadata"
+                            className="w-full h-full object-cover"
+                          />
+                          <div className="absolute top-1 left-1 flex items-center gap-1 rounded bg-black/60 px-1.5 py-0.5 text-xs text-white">
+                            <Video className="h-3 w-3" />
+                            Video
+                          </div>
+                        </>
+                      ) : image.preview ? (
                         <img src={image.preview} alt={`Captured ${index + 1}`} className="w-full h-full object-cover" />
                       ) : null}
                       {image.preparing ? (
@@ -1510,7 +1740,7 @@ export default function ImageUploadForm() {
               <div className="flex-1 min-w-0">
                 <h3 className="text-xs sm:text-sm font-medium text-muted-foreground mb-1">Folder Path</h3>
                 <p className="font-mono text-sm sm:text-base text-foreground break-all" data-testid="text-folder-path">
-                  {dept || "[QC / Testing / Production]"} / {customerName || "[Customer Name]"} / {workOrderNumber || "[Work Order #]"}
+                  {dept || "[QC / Testing / Production]"} / {effectiveCustomer || "[Customer Name]"} / {workOrderNumber || "[Work Order #]"}
                 </p>
               </div>
             </div>
@@ -1601,6 +1831,27 @@ export default function ImageUploadForm() {
         />,
         document.body
       )}
+      {showVideoRecorder && createPortal(
+        <VideoRecorder onCapture={handleVideoCapture} onClose={() => setShowVideoRecorder(false)} />,
+        document.body
+      )}
+      <CustomWorkOrderDialog
+        open={customDialogOpen}
+        initialWorkOrder={typedIsKnown ? "" : workOrderSearch}
+        onOpenChange={setCustomDialogOpen}
+        onCreated={(wo) => {
+          queryClient.setQueryData<{ items: CustomWorkOrder[] }>(['/api/custom-work-orders'], (prev) => ({
+            ...(prev ?? {}),
+            items: [wo, ...(prev?.items ?? []).filter((c) => c.id !== wo.id)],
+          }));
+          selectWorkOrder(wo.workOrderNumber);
+          trackFeature("imageflow.custom_wo.created", "Create custom work order");
+          toast({
+            title: `Custom work order ${wo.workOrderNumber} created`,
+            description: "Everyone can now pick it from the Work Order list.",
+          });
+        }}
+      />
     </div>
   );
 }

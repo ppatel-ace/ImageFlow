@@ -29,6 +29,14 @@ import {
 } from "./driveMigration";
 import { getDriveReaderStatus, parseDriveFolderId } from "./googleDriveReader";
 import { deleteManualPart, listPartOptions, recordManualPartSafely } from "./partOverrides";
+import {
+  CustomWorkOrderError,
+  NO_CUSTOMER_FOLDER,
+  createCustomWorkOrder,
+  deleteCustomWorkOrder,
+  findCustomWorkOrder,
+  listCustomWorkOrders,
+} from "./customWorkOrders";
 
 const JOB_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const MAX_STATUS_IDS = 100;
@@ -105,24 +113,22 @@ async function handleStageJob(req: AceAuthRequest & { imageflowStartedAt?: numbe
   if (!req.file) {
     return res.status(400).json({ error: "No file uploaded" });
   }
-  if (!/^image\//i.test(req.file.mimetype || "")) {
-    return res.status(400).json({ error: "Only image files can be uploaded" });
-  }
+  const kind = checkUploadFile(req.file);
+  if (!kind.ok) return res.status(kind.status).json({ error: kind.error, message: kind.message });
 
-  const { jobId, customerName, dept, workOrderNumber, imageName, partNumber, rev } = req.body;
+  const { jobId, dept, workOrderNumber, imageName, rev } = req.body;
   if (!jobId || !JOB_ID_RE.test(String(jobId))) {
     return res.status(400).json({ error: "Missing or invalid jobId" });
   }
-  if (!customerName || !dept || !workOrderNumber || !imageName) {
-    return res.status(400).json({ error: "Missing required fields" });
-  }
+  const resolved = await resolveUploadMeta(req.body);
+  if (!resolved.ok) return res.status(400).json({ error: resolved.error });
+  const { customerName, partNumber } = resolved;
 
   const userId = userIdOf(req);
   if (!userId) return res.status(401).json({ error: "Not authenticated" });
   const user = req.aceSsoUser!;
 
-  const extension = (req.file.originalname.split(".").pop() || "jpg").replace(/[^a-z0-9]/gi, "") || "jpg";
-  const fileName = `${String(imageName)}.${extension}`;
+  const fileName = `${String(imageName)}.${kind.extension}`;
 
   try {
     const staged = await stageUploadJob({
@@ -131,9 +137,9 @@ async function handleStageJob(req: AceAuthRequest & { imageflowStartedAt?: numbe
       contentType: req.file.mimetype,
       fileName,
       dept: String(dept),
-      customerName: String(customerName),
+      customerName,
       workOrderNumber: String(workOrderNumber),
-      partNumber: String(partNumber ?? ""),
+      partNumber,
       rev: String(rev ?? ""),
       userId,
       userEmail: user.email || "unknown",
@@ -147,9 +153,9 @@ async function handleStageJob(req: AceAuthRequest & { imageflowStartedAt?: numbe
     if (staged.created) {
       await recordManualPartSafely({
         workOrderNumber: String(workOrderNumber),
-        partNumber: String(partNumber ?? ""),
+        partNumber,
         rev: String(rev ?? ""),
-        customerName: String(customerName),
+        customerName: customerName === NO_CUSTOMER_FOLDER ? "" : customerName,
         userId,
         userEmail: user.email || "",
         userName: user.name || user.email || "Unknown User",
@@ -169,10 +175,13 @@ async function handleStageJob(req: AceAuthRequest & { imageflowStartedAt?: numbe
   }
 }
 
-const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
+const MAX_IMAGE_BYTES = 25 * 1024 * 1024;
+const MAX_VIDEO_BYTES = 100 * 1024 * 1024;
+const VIDEO_TYPE_RE = /^video\/(mp4|webm|quicktime)\b/i;
+const VIDEO_EXTENSIONS = new Set(["mp4", "webm", "mov", "m4v"]);
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: MAX_UPLOAD_BYTES },
+  limits: { fileSize: MAX_VIDEO_BYTES },
 });
 const requireImageflow = requireAceSsoApp("imageflow");
 
@@ -181,12 +190,70 @@ function acceptImageFile(req: AceAuthRequest, res: any, next: any) {
     if (err?.code === "LIMIT_FILE_SIZE") {
       return res.status(413).json({
         error: "File too large",
-        message: "Image must be 25 MB or smaller.",
+        message: "Videos must be 100 MB or smaller (about 2 minutes).",
       });
     }
     if (err) return next(err);
     next();
   });
+}
+
+type UploadKind =
+  | { ok: true; extension: string }
+  | { ok: false; status: number; error: string; message: string };
+
+/** Photos (any image type, 25 MB) or videos (mp4 / webm / mov, 100 MB). */
+function checkUploadFile(file: Express.Multer.File): UploadKind {
+  const mime = file.mimetype || "";
+  const ext = (file.originalname.split(".").pop() || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  if (VIDEO_TYPE_RE.test(mime)) {
+    const fallback = /webm/i.test(mime) ? "webm" : /quicktime/i.test(mime) ? "mov" : "mp4";
+    return { ok: true, extension: VIDEO_EXTENSIONS.has(ext) ? ext : fallback };
+  }
+  if (/^image\//i.test(mime)) {
+    if (file.size > MAX_IMAGE_BYTES) {
+      return { ok: false, status: 413, error: "File too large", message: "Image must be 25 MB or smaller." };
+    }
+    return { ok: true, extension: ext || "jpg" };
+  }
+  return {
+    ok: false,
+    status: 400,
+    error: "Only photos and videos (mp4, webm, mov) can be uploaded",
+    message: "Only photos and videos (mp4, webm, mov) can be uploaded",
+  };
+}
+
+type ResolvedMeta =
+  | { ok: true; customerName: string; partNumber: string }
+  | { ok: false; error: string };
+
+/** Customer and part are required, except on custom work orders (blank customer → "No Customer"). */
+async function resolveUploadMeta(body: Record<string, unknown>): Promise<ResolvedMeta> {
+  const str = (v: unknown) => (typeof v === "string" ? v.trim() : "");
+  const customerName = str(body.customerName);
+  const partNumber = str(body.partNumber);
+  const workOrderNumber = str(body.workOrderNumber);
+  if (!str(body.dept) || !workOrderNumber || !str(body.imageName)) {
+    return { ok: false, error: "Missing required fields" };
+  }
+  if (customerName && partNumber) return { ok: true, customerName, partNumber };
+  let custom = null;
+  try {
+    custom = await findCustomWorkOrder(workOrderNumber);
+  } catch (err) {
+    console.warn("[custom-wo] lookup failed:", (err as Error).message);
+  }
+  if (!custom) {
+    return { ok: false, error: "Customer and Part # are required (only custom work orders can leave them blank)" };
+  }
+  return { ok: true, customerName: customerName || NO_CUSTOMER_FOLDER, partNumber };
+}
+
+function customWorkOrderError(res: any, error: any) {
+  if (error instanceof CustomWorkOrderError) return res.status(error.status).json({ error: error.message });
+  console.error("[custom-wo] request failed:", error);
+  res.status(500).json({ error: error?.message || String(error) });
 }
 
 /** If WO cache is empty but SFTP is configured, pull Excel once before answering. */
@@ -210,15 +277,15 @@ async function handleImageUpload(req: AceAuthRequest, res: any) {
       return res.status(400).json({ error: "No file uploaded" });
     }
 
-    const { customerName, dept, workOrderNumber, imageName, partNumber, rev } =
-      req.body;
+    const kind = checkUploadFile(req.file);
+    if (!kind.ok) return res.status(kind.status).json({ error: kind.error, message: kind.message });
 
-    if (!customerName || !dept || !workOrderNumber || !imageName) {
-      return res.status(400).json({ error: "Missing required fields" });
-    }
+    const { dept, workOrderNumber, imageName, rev } = req.body;
+    const resolved = await resolveUploadMeta(req.body);
+    if (!resolved.ok) return res.status(400).json({ error: resolved.error });
+    const { customerName, partNumber } = resolved;
 
-    const extension = req.file.originalname.split(".").pop() || "jpg";
-    const fileName = `${imageName}.${extension}`;
+    const fileName = `${imageName}.${kind.extension}`;
 
     const result = await uploadFileToSharePoint(
       customerName,
@@ -521,6 +588,61 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error: any) {
       console.error("Error fetching work orders:", error);
       res.status(500).json({ error: "Failed to fetch work orders" });
+    }
+  });
+
+  app.get("/api/custom-work-orders", requireImageflow, async (req: AceAuthRequest, res) => {
+    try {
+      res.json({
+        databaseConfigured: isDatabaseConfigured(),
+        items: await listCustomWorkOrders({ userId: userIdOf(req), isAdmin: isImageflowAdmin(req) }),
+      });
+    } catch (error) {
+      customWorkOrderError(res, error);
+    }
+  });
+
+  app.post("/api/custom-work-orders", requireImageflow, async (req: AceAuthRequest, res) => {
+    const userId = userIdOf(req);
+    if (!userId) return res.status(401).json({ error: "Not authenticated" });
+    const user = req.aceSsoUser!;
+    const body = req.body ?? {};
+    const str = (v: unknown) => (typeof v === "string" ? v : "");
+    try {
+      await ensureWorkOrderDataLoaded();
+      const created = await createCustomWorkOrder(
+        {
+          workOrderNumber: str(body.workOrderNumber),
+          customerName: str(body.customerName),
+          partNumber: str(body.partNumber),
+          rev: str(body.rev),
+          note: str(body.note),
+          userId,
+          userEmail: user.email || "",
+          userName: user.name || user.email || "Unknown User",
+        },
+        { userId, isAdmin: isImageflowAdmin(req) },
+      );
+      res.locals.auditRecord = { type: "custom_work_order", id: created.id, label: created.workOrderNumber };
+      res.status(201).json(created);
+    } catch (error) {
+      customWorkOrderError(res, error);
+    }
+  });
+
+  app.delete("/api/custom-work-orders/:id", requireImageflow, async (req: AceAuthRequest, res) => {
+    if (!isDatabaseConfigured()) return res.status(503).json({ error: "DATABASE_URL not set" });
+    const id = String(req.params.id || "");
+    if (!/^\d{1,18}$/.test(id)) return res.status(400).json({ error: "Invalid id" });
+    try {
+      const result = await deleteCustomWorkOrder(id, { userId: userIdOf(req), isAdmin: isImageflowAdmin(req) });
+      if (result === "not_found") return res.status(404).json({ error: "Not found" });
+      if (result === "forbidden") {
+        return res.status(403).json({ error: "Only the person who created this work order or an admin can remove it" });
+      }
+      res.json({ deleted: true });
+    } catch (error) {
+      customWorkOrderError(res, error);
     }
   });
 

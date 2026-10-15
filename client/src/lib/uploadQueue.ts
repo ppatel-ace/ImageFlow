@@ -648,9 +648,14 @@ export function buildMultipart(photo: QueuedPhoto, bytes: ArrayBuffer, includeJo
   return { body, contentType: `multipart/form-data; boundary=${boundary}` };
 }
 
-async function fetchWithTimeout(url: string, init: RequestInit): Promise<Response> {
+/** Videos can be ~100 MB: allow down to 60 KB/s (server request timeout is 30 min). */
+function sendTimeoutMs(bytes: number): number {
+  return Math.max(SEND_TIMEOUT_MS, Math.ceil(bytes / 60_000) * 1000);
+}
+
+async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs = SEND_TIMEOUT_MS): Promise<Response> {
   const controller = new AbortController();
-  const timer = window.setTimeout(() => controller.abort(), SEND_TIMEOUT_MS);
+  const timer = window.setTimeout(() => controller.abort(), timeoutMs);
   try {
     return await fetch(url, { ...init, credentials: "include", signal: controller.signal });
   } finally {
@@ -670,11 +675,15 @@ async function scheduleRetry(photo: QueuedPhoto, message: string): Promise<void>
 
 async function sendLegacy(photo: QueuedPhoto, bytes: ArrayBuffer): Promise<void> {
   const multipart = buildMultipart(photo, bytes, false);
-  const res = await fetchWithTimeout("/api/upload/sharepoint", {
-    method: "POST",
-    body: multipart.body,
-    headers: { "Content-Type": multipart.contentType },
-  });
+  const res = await fetchWithTimeout(
+    "/api/upload/sharepoint",
+    {
+      method: "POST",
+      body: multipart.body,
+      headers: { "Content-Type": multipart.contentType },
+    },
+    sendTimeoutMs(multipart.body.byteLength),
+  );
   const body = await res.json().catch(() => ({}) as any);
   if (res.ok) {
     await updatePhoto(photo.id, {
@@ -729,7 +738,7 @@ async function sendOne(photo: QueuedPhoto): Promise<void> {
           bytes: bytes.byteLength,
         }),
       },
-    });
+    }, sendTimeoutMs(multipart.body.byteLength));
     const body = await res.json().catch(() => ({}) as any);
 
     if (res.status === 202 || res.ok) {

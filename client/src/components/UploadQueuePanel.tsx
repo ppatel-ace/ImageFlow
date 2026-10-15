@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { CheckCircle2, CloudUpload, Loader2, RotateCw, Search, Trash2, TriangleAlert, WifiOff } from "lucide-react";
+import { CheckCircle2, CloudUpload, Loader2, RotateCw, Search, Trash2, TriangleAlert, Video, WifiOff } from "lucide-react";
+import { isVideoExt } from "@/lib/media";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -56,7 +57,8 @@ function isActive(p: QueuedPhoto): boolean {
 
 function Thumb({ photo }: { photo: QueuedPhoto }) {
   const [url, setUrl] = useState<string | null>(null);
-  const source = photo.thumb ?? photo.blob;
+  const isVideo = isVideoExt(photo.ext);
+  const source = isVideo ? null : photo.thumb ?? photo.blob;
   useEffect(() => {
     if (!source) return;
     const next = URL.createObjectURL(source);
@@ -64,8 +66,12 @@ function Thumb({ photo }: { photo: QueuedPhoto }) {
     return () => URL.revokeObjectURL(next);
   }, [source]);
   return (
-    <div className="h-14 w-14 shrink-0 overflow-hidden rounded-md bg-muted">
-      {url ? <img src={url} alt="" className="h-full w-full object-cover" /> : null}
+    <div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-md bg-muted">
+      {isVideo ? (
+        <Video className="h-6 w-6 text-muted-foreground" aria-label="Video" />
+      ) : url ? (
+        <img src={url} alt="" className="h-full w-full object-cover" />
+      ) : null}
     </div>
   );
 }

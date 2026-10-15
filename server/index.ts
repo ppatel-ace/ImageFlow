@@ -137,6 +137,8 @@ app.post(
 
 (async () => {
   const server = await registerRoutes(app);
+  // Node's 5-minute default would cut off a ~100 MB video sent over slow shop Wi-Fi.
+  server.requestTimeout = 30 * 60 * 1000;
 
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
     const status = err.status || err.statusCode || 500;
