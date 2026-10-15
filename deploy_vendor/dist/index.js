@@ -270,7 +270,8 @@ async function checkForNewExcelFile() {
 // server/sharepoint.ts
 import { createHash, createSign, randomUUID, X509Certificate } from "crypto";
 import { existsSync as existsSync3, readFileSync as readFileSync2 } from "fs";
-var tokenCache = null;
+var tokenCaches = /* @__PURE__ */ new Map();
+var GRAPH_SCOPE = "https://graph.microsoft.us/.default";
 var cachedSiteId = null;
 var cachedDriveId = null;
 var GRAPH_BASE = "https://graph.microsoft.us/v1.0";
@@ -389,9 +390,10 @@ function sitesPermissionHint(status, body) {
   if (status !== 403 && status !== 401) return "";
   return ` Azure app lacks SharePoint access. Fix (GCC High admin): (1) App registration \u2192 API permissions \u2192 Microsoft Graph application Sites.Selected (or Sites.ReadWrite.All) + admin consent. (2) Grant that app Write on the site (Grant-PnPAzureADAppSitePermission / Graph site permissions). (3) Prefer setting SHAREPOINT_SITE_ID so the app skips site hostname lookup (Sites.Selected often returns 403 on /sites/{host}:{path}). Graph detail: ${body.slice(0, 180)}`;
 }
-async function getAccessToken() {
-  if (tokenCache && tokenCache.expiresAt > Date.now() + 6e4) {
-    return tokenCache.accessToken;
+async function getAccessToken(scope = GRAPH_SCOPE) {
+  const cached2 = tokenCaches.get(scope);
+  if (cached2 && cached2.expiresAt > Date.now() + 6e4) {
+    return cached2.accessToken;
   }
   const tenantId = requireEnv("AZURE_TENANT_ID");
   const clientId = requireEnv("AZURE_CLIENT_ID");
@@ -399,7 +401,7 @@ async function getAccessToken() {
   const params = new URLSearchParams({
     grant_type: "client_credentials",
     client_id: clientId,
-    scope: "https://graph.microsoft.us/.default"
+    scope
   });
   applyClientCredential(params, tokenUrl, clientId);
   const tokenController = new AbortController();
@@ -429,11 +431,11 @@ async function getAccessToken() {
   if (!data.access_token) {
     throw new Error("Azure token response missing access_token");
   }
-  tokenCache = {
+  tokenCaches.set(scope, {
     accessToken: data.access_token,
     expiresAt: Date.now() + (data.expires_in ?? 3600) * 1e3
-  };
-  return tokenCache.accessToken;
+  });
+  return data.access_token;
 }
 var METADATA_TIMEOUT_MS = 3e4;
 var CONTENT_TIMEOUT_MS = 12e4;
@@ -1173,16 +1175,43 @@ function cleanSegment(value) {
   return sanitizePathSegment(decodeEntities(value));
 }
 var JUNK_RE = /^(desktop\.ini|thumbs\.db|\.ds_store|~\$.*)$/i;
+var PHOTO_EXT_RE = /\.(jpe?g|jfif|png|gif|bmp|tiff?|heic|heif|webp|dng|cr2|nef|arw)$/i;
 function classifyDriveFile(name, mimeType) {
   if (JUNK_RE.test(name)) return { copy: false, reason: "System file (not a photo)" };
   if (mimeType.startsWith("application/vnd.google-apps.")) return { copy: false, reason: "Google Docs item (not a photo)" };
-  if (mimeType.startsWith("image/")) return { copy: true };
+  if (mimeType.startsWith("image/") || PHOTO_EXT_RE.test(name)) return { copy: true };
   return { copy: false, reason: `Not a photo (${mimeType || "unknown type"})` };
 }
+var NOTE_AFTER_EXT_RE = /^(.*?)\.(jpe?g|jfif|png|gif|bmp|tiff?|heic|heif|webp)\s+(.+)$/i;
+var EXT_BY_MIME = {
+  "image/jpeg": "jpg",
+  "image/png": "png",
+  "image/gif": "gif",
+  "image/bmp": "bmp",
+  "image/tiff": "tif",
+  "image/heic": "heic",
+  "image/heif": "heif",
+  "image/webp": "webp"
+};
+function normalizePhotoName(name, mimeType) {
+  if (PHOTO_EXT_RE.test(name)) return name;
+  const note = name.match(NOTE_AFTER_EXT_RE);
+  if (note) return `${note[1]} ${note[3].trim()}.${note[2]}`;
+  const ext = EXT_BY_MIME[mimeType.toLowerCase()];
+  return ext ? `${name}.${ext}` : name;
+}
 function mapDrivePath(folders) {
-  if (folders.length === 3) {
+  if (folders.length >= 3) {
     const dept = canonicalDept(folders[1]);
-    if (dept) return { kind: "mapped", dept, driveCustomer: folders[0], workOrder: cleanSegment(folders[2]) };
+    if (dept) {
+      return {
+        kind: "mapped",
+        dept,
+        driveCustomer: folders[0],
+        workOrder: cleanSegment(folders[2]),
+        subfolders: folders.slice(3).map(cleanSegment)
+      };
+    }
   }
   return { kind: "old_photos", folder: [OLD_PHOTOS_FOLDER, ...folders.map(cleanSegment)].join("/") };
 }
@@ -2919,8 +2948,8 @@ async function runScan(runId, rootFolderId, skipFolders) {
       const target = mapDrivePath(node.folders);
       if (target.kind === "mapped") {
         const resolved = resolveCustomerFolder(target.driveCustomer, afterRename[target.dept]);
-        const folder = `${target.dept}/${resolved.name}/${target.workOrder}`;
-        const fileName = uniqueFileName(folder, child.name, takenNames);
+        const folder = [target.dept, resolved.name, target.workOrder, ...target.subfolders].join("/");
+        const fileName = uniqueFileName(folder, normalizePhotoName(child.name, child.mimeType), takenNames);
         plan.totals.mapped++;
         plan.byDept[target.dept] = (plan.byDept[target.dept] ?? 0) + 1;
         const ck = `${target.dept}|${resolved.name}`;
@@ -2929,7 +2958,7 @@ async function runScan(runId, rootFolderId, skipFolders) {
         customers.set(ck, entry);
         pending.push({ ...base, kind: "mapped", dept: target.dept, customer: resolved.name, targetFolder: folder, fileName, status: "pending", lastError: null });
       } else {
-        const fileName = uniqueFileName(target.folder, child.name, takenNames);
+        const fileName = uniqueFileName(target.folder, normalizePhotoName(child.name, child.mimeType), takenNames);
         plan.totals.oldPhotos++;
         const group = target.folder.split("/").slice(0, 3).join("/");
         oldFolders.set(group, (oldFolders.get(group) ?? 0) + 1);
