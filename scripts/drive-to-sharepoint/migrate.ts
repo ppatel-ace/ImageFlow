@@ -182,6 +182,7 @@ async function startDriveServer(rootId: string): Promise<void> {
     ],
     { windowsHide: true, stdio: "ignore" },
   );
+  proc.unref();
   process.on("exit", () => proc.kill());
   const base = `http://127.0.0.1:${port}`;
   for (let i = 0; i < 60; i++) {
@@ -765,7 +766,9 @@ async function main() {
   process.exitCode = failures.length ? 1 : 0;
 }
 
-main().catch((err) => {
-  console.error(`\nError: ${err instanceof Error ? err.message : String(err)}`);
-  process.exit(1);
-});
+main()
+  .then(() => process.exit(process.exitCode ?? 0))
+  .catch((err) => {
+    console.error(`\nError: ${err instanceof Error ? err.message : String(err)}`);
+    process.exit(1);
+  });
